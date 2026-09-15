@@ -5,7 +5,19 @@
 //
 // CTL_CODE(DeviceType, Function, Method, Access)
 
-#include <ntdef.h>
+#if defined(_KERNEL_MODE) || defined(_NTDDK_) || defined(_WDMDDK_)
+#include <ntddk.h>
+#else
+#include <windows.h>
+#include <winioctl.h>
+#ifndef NTSTATUS
+typedef LONG NTSTATUS;
+#endif
+#ifndef STATUS_SUCCESS
+#define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
+#endif
+#endif
+
 #define ROOTKIT_DEVICE_TYPE 0x8000
 
 // Basic control

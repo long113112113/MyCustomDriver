@@ -61,6 +61,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
 // UNLOAD DRIVER function
 //
 VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
+  UNREFERENCED_PARAMETER(DriverObject);
   UNICODE_STRING symlinkName;
 
   DbgPrint("DriverUnload start\n");

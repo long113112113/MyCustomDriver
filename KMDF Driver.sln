@@ -5,6 +5,8 @@ VisualStudioVersion = 17.14.37614.0 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Driver", "Driver\KMDF Driver.vcxproj", "{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Client", "Client\Client.vcxproj", "{168F2841-DF72-4F22-8FB3-4553609B2949}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|ARM64 = Debug|ARM64
@@ -25,6 +27,14 @@ Global
 		{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}.Release|x64.ActiveCfg = Release|x64
 		{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}.Release|x64.Build.0 = Release|x64
 		{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}.Release|x64.Deploy.0 = Release|x64
+		{168F2841-DF72-4F22-8FB3-4553609B2949}.Debug|ARM64.ActiveCfg = Debug|ARM64
+		{168F2841-DF72-4F22-8FB3-4553609B2949}.Debug|ARM64.Build.0 = Debug|ARM64
+		{168F2841-DF72-4F22-8FB3-4553609B2949}.Debug|x64.ActiveCfg = Debug|x64
+		{168F2841-DF72-4F22-8FB3-4553609B2949}.Debug|x64.Build.0 = Debug|x64
+		{168F2841-DF72-4F22-8FB3-4553609B2949}.Release|ARM64.ActiveCfg = Release|ARM64
+		{168F2841-DF72-4F22-8FB3-4553609B2949}.Release|ARM64.Build.0 = Release|ARM64
+		{168F2841-DF72-4F22-8FB3-4553609B2949}.Release|x64.ActiveCfg = Release|x64
+		{168F2841-DF72-4F22-8FB3-4553609B2949}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
