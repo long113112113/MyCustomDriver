@@ -1,5 +1,6 @@
 #include "Device.h"
 #include "Dispatch.h"
+#include "ProcessModule.h"
 #include <ntddk.h>
 
 // Symlink and device name.
@@ -50,8 +51,16 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
   DriverObject->MajorFunction[IRP_MJ_CLOSE] = DispatchClose;
   DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DispatchDeviceControl;
 
-  // TODO: Init kernel model
-  // DriverInitialize();
+  // Init feature modules
+  status = ProcessModuleInitialize();
+  if (!NT_SUCCESS(status)) {
+    DbgPrint("ProcessModuleInitialize failed: 0x%X\n", status);
+    RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);
+    IoDeleteSymbolicLink(&symlinkName);
+    IoDeleteDevice(g_DeviceObject);
+    g_DeviceObject = NULL;
+    return status;
+  }
 
   DbgPrint("Driver loaded successfully.\n");
   return STATUS_SUCCESS;
@@ -66,8 +75,8 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
 
   DbgPrint("DriverUnload start\n");
 
-  // TODO: Unload kernel model
-  //  DriverCleanup();
+  // Cleanup feature modules
+  ProcessModuleCleanup();
 
   // Clean symbolic link
   RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);

