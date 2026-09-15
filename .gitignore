@@ -1,0 +1,4 @@
+*.md
+x64/
+/.vs
+KMDF Driver/compile_flags.txt
