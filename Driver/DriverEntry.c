@@ -1,5 +1,6 @@
+#include "Device.h"
+#include "Dispatch.h"
 #include <ntddk.h>
-#include <wdf.h>
 
 // Symlink and device name.
 #define DEVICE_NAME L"\\Device\\LongsDriver"
@@ -8,7 +9,7 @@
 PDEVICE_OBJECT g_DeviceObject = NULL;
 
 //
-// LOAD DRIVER
+// LOAD DRIVER function
 //
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
                      PUNICODE_STRING RegistryPath) {
@@ -57,7 +58,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
 }
 
 //
-// UNLOAD DRIVER
+// UNLOAD DRIVER function
 //
 VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
   UNICODE_STRING symlinkName;
