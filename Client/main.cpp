@@ -88,6 +88,7 @@ int main(int argc, char *argv[]) {
 
   HideProcess(hDevice, targetPid);
   ListHiddenProcesses(hDevice);
+  Sleep(10000);
   UnhideProcess(hDevice, targetPid);
   ListHiddenProcesses(hDevice);
 

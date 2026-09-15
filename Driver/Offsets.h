@@ -21,6 +21,3 @@ NTSTATUS OffsetsInitialize(VOID);
 
 // EPROCESS.ActiveProcessLinks offset
 ULONG GetActiveProcessLinksOffset(VOID);
-
-// EPROCESS.ProcessLock offset
-ULONG GetProcessLockOffset(VOID);
