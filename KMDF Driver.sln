@@ -1,9 +1,9 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.37614.0 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "KMDF Driver", "KMDF Driver\KMDF Driver.vcxproj", "{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Driver", "Driver\KMDF Driver.vcxproj", "{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -107,6 +107,9 @@
     <ClCompile Include="DriverEntry.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Shared.h" />
+  </ItemGroup>
+  <ItemGroup>
     <Inf Include="KMDFDriver.inf" />
   </ItemGroup>
   <ItemGroup>
