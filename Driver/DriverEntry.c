@@ -1,6 +1,7 @@
 #include "Device.h"
 #include "Dispatch.h"
 #include "ProcessModule.h"
+#include "ThreadModule.h"
 #include <ntddk.h>
 
 #define DEVICE_NAME L"\\Device\\LongsDriver"
@@ -75,6 +76,17 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
   status = ProcessModuleInitialize();
   if (!NT_SUCCESS(status)) {
     DbgPrint("[LongsDriver] ProcessModuleInitialize failed: 0x%X\n", status);
+    RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);
+    IoDeleteSymbolicLink(&symlinkName);
+    IoDeleteDevice(g_DeviceObject);
+    g_DeviceObject = NULL;
+    return status;
+  }
+
+  status = ThreadModuleInitialize();
+  if (!NT_SUCCESS(status)) {
+    DbgPrint("[LongsDriver] ThreadModuleInitialize failed: 0x%X\n", status);
+    ProcessModuleCleanup();
     RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);
     IoDeleteSymbolicLink(&symlinkName);
     IoDeleteDevice(g_DeviceObject);
@@ -169,6 +181,7 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
 
   // Cleanup feature modules
   ProcessModuleCleanup();
+  ThreadModuleCleanup();
 
   // Clean symbolic link
   RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);
