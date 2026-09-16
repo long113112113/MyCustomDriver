@@ -3,23 +3,36 @@
 #include "ProcessModule.h"
 #include <ntddk.h>
 
-// Symlink and device name.
 #define DEVICE_NAME L"\\Device\\LongsDriver"
 #define SYMLINK_NAME L"\\DosDevices\\LongsDriver"
 
 PDEVICE_OBJECT g_DeviceObject = NULL;
 
 //
-// LOAD DRIVER function
+// IoCreateDriver is not declared in WDK headers; resolve it at runtime It is
+// exported by ntoskrnl.exe under this exact name.
 //
-NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
-                     PUNICODE_STRING RegistryPath) {
+typedef NTSTATUS (*PIO_CREATE_DRIVER)(
+    PUNICODE_STRING DriverName, PDRIVER_INITIALIZE InitializationFunction);
+
+static PIO_CREATE_DRIVER ResolveIoCreateDriver(VOID) {
+  UNICODE_STRING routineName = RTL_CONSTANT_STRING(L"IoCreateDriver");
+  return (PIO_CREATE_DRIVER)MmGetSystemRoutineAddress(&routineName);
+}
+
+//
+// Init routine invoked by IoCreateDriver with a valid DRIVER_OBJECT.
+// Sets up device, symbolic link and dispatch routines, then initializes
+// feature modules. Runs only in the kdmapper-loaded path.
+//
+static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
+                                 _In_ PUNICODE_STRING RegistryPath) {
   UNREFERENCED_PARAMETER(RegistryPath);
 
   NTSTATUS status;
   UNICODE_STRING deviceName, symlinkName;
 
-  DbgPrint("DriverEntry start\n");
+  DbgPrint("[LongsDriver] MappedDeviceInit start\n");
 
   // Init unload
   DriverObject->DriverUnload = DriverUnload;
@@ -32,16 +45,23 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
                           FILE_DEVICE_SECURE_OPEN, FALSE, &g_DeviceObject);
 
   if (!NT_SUCCESS(status)) {
-    DbgPrint("IoCreateDevice failed: 0x%X\n", status);
+    DbgPrint("[LongsDriver] IoCreateDevice failed: 0x%X\n", status);
     return status;
   }
+
+  // When loaded through IoCreateDriver the I/O manager does not finish
+  // device initialization for us (like it does for a normal service load),
+  // so clear DO_DEVICE_INITIALIZING and enable buffered IO manually. See
+  // Nidhogg's reflective-load branch for the same pattern.
+  g_DeviceObject->Flags |= DO_BUFFERED_IO;
+  g_DeviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
 
   // Init Symbolic Link
   RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);
   status = IoCreateSymbolicLink(&symlinkName, &deviceName);
 
   if (!NT_SUCCESS(status)) {
-    DbgPrint("IoCreateSymbolicLink failed: 0x%X\n", status);
+    DbgPrint("[LongsDriver] IoCreateSymbolicLink failed: 0x%X\n", status);
     IoDeleteDevice(g_DeviceObject);
     return status;
   }
@@ -54,7 +74,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
   // Init feature modules
   status = ProcessModuleInitialize();
   if (!NT_SUCCESS(status)) {
-    DbgPrint("ProcessModuleInitialize failed: 0x%X\n", status);
+    DbgPrint("[LongsDriver] ProcessModuleInitialize failed: 0x%X\n", status);
     RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);
     IoDeleteSymbolicLink(&symlinkName);
     IoDeleteDevice(g_DeviceObject);
@@ -62,7 +82,79 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
     return status;
   }
 
-  DbgPrint("Driver loaded successfully.\n");
+  DbgPrint("[LongsDriver] Driver loaded successfully.\n");
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS BuildUniqueDriverName(PUNICODE_STRING name) {
+  static const WCHAR prefix[] = L"\\Driver\\LongsDriver_";
+  const SIZE_T prefixBytes = (sizeof(prefix) - sizeof(WCHAR));
+  LARGE_INTEGER now;
+  UNICODE_STRING seqName;
+  WCHAR seqBuffer[16];
+  NTSTATUS status;
+
+  if (name->MaximumLength < prefixBytes + sizeof(seqBuffer) * 2) {
+    return STATUS_BUFFER_TOO_SMALL;
+  }
+
+  RtlCopyMemory(name->Buffer, prefix, prefixBytes);
+  name->Length = (USHORT)prefixBytes;
+
+  KeQuerySystemTime(&now);
+
+  seqName.Buffer = seqBuffer;
+  seqName.Length = 0;
+  seqName.MaximumLength = sizeof(seqBuffer);
+
+  status = RtlIntegerToUnicodeString((ULONG)(now.QuadPart & 0xFFFFFFFF), 16,
+                                     &seqName);
+  if (NT_SUCCESS(status)) {
+    status = RtlAppendUnicodeStringToString(name, &seqName);
+  }
+  if (NT_SUCCESS(status) && (now.QuadPart >> 32)) {
+    status =
+        RtlIntegerToUnicodeString((ULONG)(now.QuadPart >> 32), 16, &seqName);
+    if (NT_SUCCESS(status)) {
+      status = RtlAppendUnicodeStringToString(name, &seqName);
+    }
+  }
+  return status;
+}
+
+NTSTATUS DmEntry(_In_opt_ PDRIVER_OBJECT DriverObject,
+                 _In_opt_ PUNICODE_STRING RegistryPath) {
+  UNREFERENCED_PARAMETER(DriverObject);
+  UNREFERENCED_PARAMETER(RegistryPath);
+
+  PIO_CREATE_DRIVER IoCreateDriver = ResolveIoCreateDriver();
+  UNICODE_STRING driverName;
+  WCHAR driverNameBuffer[64];
+  NTSTATUS status;
+
+  if (IoCreateDriver == NULL) {
+    DbgPrint("[LongsDriver] DmEntry: cannot resolve IoCreateDriver\n");
+    return STATUS_INCOMPATIBLE_DRIVER_BLOCKED;
+  }
+
+  driverName.Buffer = driverNameBuffer;
+  driverName.Length = 0;
+  driverName.MaximumLength = sizeof(driverNameBuffer);
+
+  status = BuildUniqueDriverName(&driverName);
+  if (!NT_SUCCESS(status)) {
+    DbgPrint("[LongsDriver] failed to build driver name: 0x%X\n", status);
+    return status;
+  }
+
+  DbgPrint("[LongsDriver] IoCreateDriver name: %wZ\n", &driverName);
+
+  status = IoCreateDriver(&driverName, &MappedDeviceInit);
+  if (!NT_SUCCESS(status)) {
+    DbgPrint("[LongsDriver] DmEntry: IoCreateDriver failed: 0x%X\n", status);
+    return status;
+  }
+
   return STATUS_SUCCESS;
 }
 
@@ -73,7 +165,7 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
   UNREFERENCED_PARAMETER(DriverObject);
   UNICODE_STRING symlinkName;
 
-  DbgPrint("DriverUnload start\n");
+  DbgPrint("[LongsDriver] DriverUnload start\n");
 
   // Cleanup feature modules
   ProcessModuleCleanup();
@@ -88,5 +180,5 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
     g_DeviceObject = NULL;
   }
 
-  DbgPrint("Driver unloaded.\n");
+  DbgPrint("[LongsDriver] Driver unloaded.\n");
 }
