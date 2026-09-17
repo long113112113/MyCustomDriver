@@ -1,8 +1,8 @@
+#include "Bypass.h"
 #include "Device.h"
 #include "Dispatch.h"
 #include "ProcessModule.h"
 #include "ThreadModule.h"
-#include "Bypass.h"
 #include <ntddk.h>
 
 #define DEVICE_NAME L"\\Device\\LongsDriver"
@@ -51,10 +51,6 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
     return status;
   }
 
-  // When loaded through IoCreateDriver the I/O manager does not finish
-  // device initialization for us (like it does for a normal service load),
-  // so clear DO_DEVICE_INITIALIZING and enable buffered IO manually. See
-  // Nidhogg's reflective-load branch for the same pattern.
   g_DeviceObject->Flags |= DO_BUFFERED_IO;
   g_DeviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
 
@@ -146,11 +142,19 @@ NTSTATUS DmEntry(_In_opt_ PDRIVER_OBJECT DriverObject,
   // PG DPCs, patches Context7/MCA detonators and arms the NX barricade.
   //
   DbgPrint("[LongsDriver] DmEntry: disabling PatchGuard...\n");
-  if (!BypassPatchGuard()) {
-    DbgPrint("[LongsDriver] DmEntry: PatchGuard bypass failed\n");
-    return STATUS_UNSUCCESSFUL;
+  g_PatchGuardBypassed = BypassPatchGuard();
+  if (!g_PatchGuardBypassed) {
+    DbgPrint("[LongsDriver] DmEntry: PatchGuard bypass failed, "
+             "continuing in SAFE MODE (DKOM mutations disabled)\n");
+  } else {
+    DbgPrint("[LongsDriver] DmEntry: PatchGuard disabled.\n");
   }
-
+  //
+  // Even in SAFE MODE we still create the device and register dispatch so the
+  // client can connect and use read-only IOCTLs (PING, VERSION, LIST_*).
+  // MappedDeviceInit only walks the process/thread lists read-only; it never
+  // unlinks anything, so it is safe with PatchGuard still alive.
+  //
   PIO_CREATE_DRIVER IoCreateDriver = ResolveIoCreateDriver();
   UNICODE_STRING driverName;
   WCHAR driverNameBuffer[64];

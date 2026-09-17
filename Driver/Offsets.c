@@ -81,7 +81,7 @@ ULONG GetThreadListEntryOffset(VOID) {
     break;
   case WIN_11_24H2:
   case WIN_11_25H2:
-    offset = 0x4f0;
+    offset = 0x578;
     break;
   default:
     offset = 0x4f0;
@@ -117,7 +117,7 @@ ULONG GetThreadListHeadOffset(VOID) {
     break;
   case WIN_11_24H2:
   case WIN_11_25H2:
-    offset = 0x448;
+    offset = 0x370;
     break;
   default:
     offset = 0x448;

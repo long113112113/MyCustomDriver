@@ -4,6 +4,8 @@
 #include "Kurasagi\Log.hpp"
 #include "Kurasagi\Module.hpp"
 
+extern "C" BOOLEAN g_PatchGuardBypassed = FALSE;
+
 extern "C" BOOLEAN BypassPatchGuard(void) {
   if (!gl::RtVar::InitializeRuntimeVariables()) {
     LogError("[Kurasagi]: Bypass Failed to initialize runtime variables.");

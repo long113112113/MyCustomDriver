@@ -17,6 +17,7 @@ enum CmdId {
   CMD_LIST_THREADS,
   CMD_FIND_TARGET,
   CMD_DELAY,
+  CMD_PG_STATUS,
   CMD_EXIT = 0
 };
 
@@ -37,6 +38,7 @@ static const ClientCommand kCommands[] = {
     {CMD_LIST_THREADS, "List Threads", false, NULL},
     {CMD_FIND_TARGET, "Find Target", false, NULL},
     {CMD_DELAY, "Delay", true, "seconds"},
+    {CMD_PG_STATUS, "PG Status", false, NULL},
 };
 
 static std::string g_targetName;
@@ -149,6 +151,18 @@ static void RunPing(HANDLE h) {
   else
     std::cout << "  Ping failed (0x" << std::hex << GetLastError() << std::dec
               << ")\n";
+}
+
+static void RunPgStatus(HANDLE h) {
+  DRIVER_RESPONSE r = {0};
+  DWORD ret = 0;
+  if (DeviceIoControl(h, IOCTL_GET_PG_STATUS, NULL, 0, &r, sizeof(r), &ret,
+                      NULL))
+    std::cout << "  PatchGuard bypassed: "
+              << (r.Data ? "YES (full mode)" : "NO (safe mode)") << "\n";
+  else
+    std::cout << "  PG status query failed (0x" << std::hex << GetLastError()
+              << std::dec << ")\n";
 }
 
 static void RunProcessList(HANDLE h) {
@@ -314,6 +328,9 @@ int main() {
       }
       case CMD_LIST_THREADS:
         RunThreadList(hDevice);
+        break;
+      case CMD_PG_STATUS:
+        RunPgStatus(hDevice);
         break;
       case CMD_DELAY:
         std::cout << "  Sleeping " << params[i] << "s\n";
