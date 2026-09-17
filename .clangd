@@ -1,0 +1,26 @@
+CompileFlags:
+  Add:
+    - -Wno-pragma-pack
+    - -Wno-unknown-pragmas
+    - -Wno-unused-command-line-argument
+    - -ID:/PJ/KMDF Driver/Shared
+    - -ID:/PJ/KMDF Driver/Driver
+
+---
+If:
+  PathMatch: .*\.cpp$
+CompileFlags:
+  Add:
+    - -std=c++20
+
+---
+If:
+  PathMatch: .*Bypass\.c$
+CompileFlags:
+  Add:
+    - -xc++
+    - -std=c++20
+
+---
+Diagnostics:
+  UnusedIncludes: None

@@ -87,6 +87,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)..\Shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -101,6 +102,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)..\Shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -134,6 +136,17 @@
     <ClCompile Include="Offsets.c" />
     <ClCompile Include="ProcessModule.c" />
     <ClCompile Include="ThreadModule.c" />
+    <ClCompile Include="Bypass.c">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="Kurasagi\Global.cpp" />
+    <ClCompile Include="Kurasagi\Module.cpp" />
+    <ClCompile Include="Kurasagi\Module\Barricade.cpp" />
+    <ClCompile Include="Kurasagi\Module\Context7.cpp" />
+    <ClCompile Include="Kurasagi\Module\Misc.cpp" />
+    <ClCompile Include="Kurasagi\Module\Timer.cpp" />
+    <ClCompile Include="Kurasagi\Util\Arith.cpp" />
+    <ClCompile Include="Kurasagi\Util\Memory.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Device.h" />
@@ -141,6 +154,17 @@
     <ClInclude Include="Offsets.h" />
     <ClInclude Include="ProcessModule.h" />
     <ClInclude Include="ThreadModule.h" />
+    <ClInclude Include="Bypass.h" />
+    <ClInclude Include="Kurasagi\Global.hpp" />
+    <ClInclude Include="Kurasagi\Include.hpp" />
+    <ClInclude Include="Kurasagi\Log.hpp" />
+    <ClInclude Include="Kurasagi\Module.hpp" />
+    <ClInclude Include="Kurasagi\Module\Barricade.hpp" />
+    <ClInclude Include="Kurasagi\Module\Context7.hpp" />
+    <ClInclude Include="Kurasagi\Module\Misc.hpp" />
+    <ClInclude Include="Kurasagi\Module\Timer.hpp" />
+    <ClInclude Include="Kurasagi\Util\Arith.hpp" />
+    <ClInclude Include="Kurasagi\Util\Memory.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Inf Include="KMDFDriver.inf" />

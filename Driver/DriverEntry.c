@@ -2,6 +2,7 @@
 #include "Dispatch.h"
 #include "ProcessModule.h"
 #include "ThreadModule.h"
+#include "Bypass.h"
 #include <ntddk.h>
 
 #define DEVICE_NAME L"\\Device\\LongsDriver"
@@ -138,6 +139,17 @@ NTSTATUS DmEntry(_In_opt_ PDRIVER_OBJECT DriverObject,
                  _In_opt_ PUNICODE_STRING RegistryPath) {
   UNREFERENCED_PARAMETER(DriverObject);
   UNREFERENCED_PARAMETER(RegistryPath);
+
+  //
+  // Disable PatchGuard before anything else. This must run on PASSIVE_LEVEL
+  // inside the freshly mapped image; it scans ntoskrnl (26100.4351), kills the
+  // PG DPCs, patches Context7/MCA detonators and arms the NX barricade.
+  //
+  DbgPrint("[LongsDriver] DmEntry: disabling PatchGuard...\n");
+  if (!BypassPatchGuard()) {
+    DbgPrint("[LongsDriver] DmEntry: PatchGuard bypass failed\n");
+    return STATUS_UNSUCCESSFUL;
+  }
 
   PIO_CREATE_DRIVER IoCreateDriver = ResolveIoCreateDriver();
   UNICODE_STRING driverName;
