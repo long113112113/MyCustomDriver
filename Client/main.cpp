@@ -1,4 +1,5 @@
 #include "Shared.h"
+#include "Loader.h"
 #include <Windows.h>
 #include <TlHelp32.h>
 #include <cstdlib>
@@ -213,13 +214,16 @@ static void WarnIfConflict(const std::vector<ULONG>& hideP,
   }
 }
 
-int main() {
-  HANDLE hDevice =
-      CreateFileW(L"\\\\.\\LongsDriver", GENERIC_READ | GENERIC_WRITE, 0, NULL,
-                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+int wmain(int argc, wchar_t* argv[]) {
+  std::vector<std::wstring> args;
+  for (int i = 1; i < argc; ++i)
+    args.push_back(argv[i]);
+
+  std::cout << "Opening LongsDriver\n";
+  HANDLE hDevice = OpenDriver(args);
 
   if (hDevice == INVALID_HANDLE_VALUE) {
-    std::cerr << "Cannot open driver. Error: " << GetLastError() << std::endl;
+    std::cerr << "Cannot open driver" << std::endl;
     return 1;
   }
 

@@ -155,7 +155,23 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="Loader.h" />
+    <ClInclude Include="loader\intel_driver.hpp" />
+    <ClInclude Include="loader\intel_driver_resource.hpp" />
+    <ClInclude Include="loader\kdmapper.hpp" />
+    <ClInclude Include="loader\nt.hpp" />
+    <ClInclude Include="loader\portable_executable.hpp" />
+    <ClInclude Include="loader\service.hpp" />
+    <ClInclude Include="loader\utils.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Loader.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="loader\intel_driver.cpp" />
+    <ClCompile Include="loader\kdmapper.cpp" />
+    <ClCompile Include="loader\portable_executable.cpp" />
+    <ClCompile Include="loader\service.cpp" />
+    <ClCompile Include="loader\utils.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
