@@ -2,11 +2,15 @@
 #include "Loader.h"
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <comdef.h>
+#include <taskschd.h>
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#pragma comment(lib, "taskschd.lib")
 
 enum CmdId {
   CMD_PING = 1,
@@ -19,8 +23,12 @@ enum CmdId {
   CMD_FIND_TARGET,
   CMD_DELAY,
   CMD_PG_STATUS,
+  CMD_ENABLE_TASK,
+  CMD_DISABLE_TASK,
   CMD_EXIT = 0
 };
+
+enum TaskState { TASK_MISSING, TASK_DISABLED, TASK_ENABLED, TASK_ERROR };
 
 struct ClientCommand {
   int id;
@@ -40,11 +48,14 @@ static const ClientCommand kCommands[] = {
     {CMD_FIND_TARGET, "Find Target", false, NULL},
     {CMD_DELAY, "Delay", true, "seconds"},
     {CMD_PG_STATUS, "PG Status", false, NULL},
+    {CMD_ENABLE_TASK, "Enable Task", true, "task name (Enter=LongsDriver)"},
+    {CMD_DISABLE_TASK, "Disable Task", true, "task name (Enter=LongsDriver)"},
 };
 
 static std::string g_targetName;
 static ULONG g_targetPid = 0;
 static ULONG g_targetTid = 0;
+static std::wstring g_taskName = L"LongsDriver";
 
 static void PrintMenu() {
   std::cout << "\n=== LongsDriver ===\n";
@@ -166,6 +177,113 @@ static void RunPgStatus(HANDLE h) {
               << std::dec << ")\n";
 }
 
+static void PromptTaskName() {
+  std::cout << "  Task name (Enter=LongsDriver): ";
+  std::string line;
+  std::getline(std::cin, line);
+  if (!line.empty()) {
+    int len = MultiByteToWideChar(CP_ACP, 0, line.c_str(), -1, NULL, 0);
+    g_taskName.resize(len - 1);
+    MultiByteToWideChar(CP_ACP, 0, line.c_str(), -1, &g_taskName[0], len);
+  }
+}
+
+static std::string Narrow(const std::wstring& w) {
+  if (w.empty())
+    return std::string();
+  int len = WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, NULL, 0, NULL, NULL);
+  std::string s(len - 1, 0);
+  WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, &s[0], len, NULL, NULL);
+  return s;
+}
+
+static TaskState QueryTaskState(const std::wstring& name) {
+  HRESULT coinit = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  bool needUninit = (coinit == S_OK);
+
+  ITaskService* svc = NULL;
+  HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, NULL, CLSCTX_INPROC_SERVER,
+                                IID_ITaskService, (void**)&svc);
+  if (FAILED(hr)) {
+    if (needUninit)
+      CoUninitialize();
+    return TASK_ERROR;
+  }
+
+  TaskState state = TASK_ERROR;
+  hr = svc->Connect(_variant_t(), _variant_t(), _variant_t(), _variant_t());
+  if (SUCCEEDED(hr)) {
+    ITaskFolder* folder = NULL;
+    hr = svc->GetFolder(_bstr_t(L"\\"), &folder);
+    if (SUCCEEDED(hr)) {
+      IRegisteredTask* task = NULL;
+      hr = folder->GetTask(_bstr_t(name.c_str()), &task);
+      if (SUCCEEDED(hr) && task) {
+        VARIANT_BOOL enabled = VARIANT_FALSE;
+        if (SUCCEEDED(task->get_Enabled(&enabled)))
+          state = enabled ? TASK_ENABLED : TASK_DISABLED;
+        task->Release();
+      } else {
+        state = TASK_MISSING;
+      }
+      folder->Release();
+    }
+  }
+  svc->Release();
+  if (needUninit)
+    CoUninitialize();
+  return state;
+}
+
+static void ChangeTask(const std::wstring& name, bool enable) {
+  std::string action = enable ? "enable" : "disable";
+  std::string sName = Narrow(name);
+  switch (QueryTaskState(name)) {
+  case TASK_MISSING:
+    std::cout << "  Task '" << sName << "' not found\n";
+    return;
+  case TASK_ENABLED:
+    if (enable) {
+      std::cout << "  Task '" << sName << "' already enabled, nothing to do\n";
+      return;
+    }
+    break;
+  case TASK_DISABLED:
+    if (!enable) {
+      std::cout << "  Task '" << sName
+                << "' already disabled, nothing to do\n";
+      return;
+    }
+    break;
+  case TASK_ERROR:
+    std::cout << "  [warn] Could not query task state, attempting " << action
+              << " anyway\n";
+    break;
+  }
+
+  std::cout << "  " << action << " task '" << sName << "'\n";
+  std::wstring cmdline =
+      L"schtasks /Change /TN \"" + name + L"\" " + (enable ? L"/ENABLE"
+                                                          : L"/DISABLE");
+  STARTUPINFOW si = {sizeof(si)};
+  si.dwFlags = STARTF_USESHOWWINDOW;
+  si.wShowWindow = SW_HIDE;
+  PROCESS_INFORMATION pi = {0};
+  std::wstring cmdBuf = cmdline;
+  DWORD code = 0;
+  if (CreateProcessW(NULL, &cmdBuf[0], NULL, NULL, FALSE, CREATE_NO_WINDOW,
+                     NULL, NULL, &si, &pi)) {
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, 10000);
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    std::cout << "  schtasks exit " << code << "\n";
+  } else {
+    std::cout << "  schtasks launch failed (0x" << std::hex << GetLastError()
+              << std::dec << ")\n";
+  }
+}
+
 static void RunProcessList(HANDLE h) {
   PROCESS_LIST_RESPONSE resp = {0};
   DWORD ret = 0;
@@ -260,6 +378,11 @@ int wmain(int argc, wchar_t* argv[]) {
         continue;
       }
 
+      if (cmds[i] == CMD_ENABLE_TASK || cmds[i] == CMD_DISABLE_TASK) {
+        PromptTaskName();
+        continue;
+      }
+
       if (cc->needsParam) {
         std::cout << "  " << cc->prompt << ": ";
         std::string line;
@@ -335,6 +458,12 @@ int wmain(int argc, wchar_t* argv[]) {
         break;
       case CMD_PG_STATUS:
         RunPgStatus(hDevice);
+        break;
+      case CMD_ENABLE_TASK:
+        ChangeTask(g_taskName, true);
+        break;
+      case CMD_DISABLE_TASK:
+        ChangeTask(g_taskName, false);
         break;
       case CMD_DELAY:
         std::cout << "  Sleeping " << params[i] << "s\n";

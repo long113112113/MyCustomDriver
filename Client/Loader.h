@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-// Priority: any "*.sys" arg -> "--driver <path>" -> <exedir>\LongsDriver.sys
-//          -> <exedir>\KMDFDriver.sys. Empty if nothing found.
+// Priority: any "*.sys" arg -> "--driver <path>" -> <exedir>\LongsDriver.sys.
+// Empty if nothing found.
 std::wstring ResolveDriverPath(const std::vector<std::wstring>& args);
 
 // Opens \\.\LongsDriver. If it is not running, tries to manual-map

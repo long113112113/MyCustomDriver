@@ -18,7 +18,7 @@ DefaultDestDir = 13
 1 = %DiskName%,,,""
 
 [SourceDisksFiles]
-KMDFDriver.sys = 1,,
+LongsDriver.sys = 1,,
 
 ;*****************************************
 ; Install Section
@@ -34,7 +34,7 @@ KMDFDriver.sys = 1,,
 CopyFiles = File_Copy
 
 [File_Copy]
-KMDFDriver.sys
+LongsDriver.sys
 
 ;-------------- Service installation
 [KMDFDriver_Device.NT.Services]
@@ -46,7 +46,7 @@ DisplayName    = %KMDFDriver.SVCDESC%
 ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
 StartType      = 3               ; SERVICE_DEMAND_START
 ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
-ServiceBinary  = %13%\KMDFDriver.sys
+ServiceBinary  = %13%\LongsDriver.sys
 
 [KMDFDriver_Device.NT.Wdf]
 KmdfService = KMDFDriver, KMDFDriver_wdfsect

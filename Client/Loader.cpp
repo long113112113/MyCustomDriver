@@ -28,7 +28,7 @@ std::wstring ResolveDriverPath(const std::vector<std::wstring>& args) {
       return args[i + 1];
   }
 
-  static const wchar_t* candidates[] = {L"LongsDriver.sys", L"KMDFDriver.sys"};
+  static const wchar_t* candidates[] = {L"LongsDriver.sys"};
   for (const wchar_t* c : candidates) {
     std::wstring full = exeDir + L"\\" + c;
     if (GetFileAttributesW(full.c_str()) != INVALID_FILE_ATTRIBUTES)
