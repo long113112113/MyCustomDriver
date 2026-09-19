@@ -34,6 +34,9 @@
     <ClCompile Include="ThreadModule.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="TaskPersistence.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Device.h">
@@ -49,6 +52,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ThreadModule.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="TaskPersistence.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -7,6 +7,9 @@
 #include "loader/kdmapper.hpp"
 #include "loader/nt.hpp"
 #include "loader/utils.hpp"
+#if __has_include("loader/LongsDriverBlob.h")
+#include "loader/LongsDriverBlob.h"
+#endif
 #endif
 
 std::wstring ResolveDriverPath(const std::vector<std::wstring>& args) {
@@ -54,13 +57,29 @@ HANDLE OpenDriver(const std::vector<std::wstring>& args) {
     return hDevice;
 
   std::wstring path = ResolveDriverPath(args);
-  if (path.empty()) {
-    std::cerr << "[!] No driver image found. Put LongsDriver.sys next to "
-                 "this exe or pass --driver <path>\n";
-    return INVALID_HANDLE_VALUE;
+  std::vector<BYTE> raw;
+  if (!path.empty()) {
+    std::wcout << L"[+] Driver not running, loading " << path << L"\n";
+    if (!kdmUtils::ReadFileToMemory(path, &raw) || raw.empty()) {
+      std::wcerr << L"[!] Failed to read " << path << L"\n";
+      intel_driver::Unload();
+      return INVALID_HANDLE_VALUE;
+    }
+  } else {
+#ifdef LONGS_DRIVER_BLOB_H
+    if (LongsDriverBlob::size > 0) {
+      raw.assign(LongsDriverBlob::blob, LongsDriverBlob::blob + LongsDriverBlob::size);
+      std::wcout << L"[+] Driver not running, loading embedded image ("
+                 << LongsDriverBlob::size << L" bytes)\n";
+    }
+#endif
+    if (raw.empty()) {
+      std::cerr << "[!] No driver image found. Run Client\\embed-driver.ps1, "
+                   "put LongsDriver.sys next to this exe, or pass --driver "
+                   "<path>\n";
+      return INVALID_HANDLE_VALUE;
+    }
   }
-
-  std::wcout << L"[+] Driver not running, loading " << path << L"\n";
 
   NTSTATUS loadStatus = intel_driver::Load();
   if (!NT_SUCCESS(loadStatus)) {
@@ -73,13 +92,6 @@ HANDLE OpenDriver(const std::vector<std::wstring>& args) {
 
   if (!intel_driver::IsRunning()) {
     std::cerr << "[!] Vulnerable driver did not start\n";
-    intel_driver::Unload();
-    return INVALID_HANDLE_VALUE;
-  }
-
-  std::vector<BYTE> raw;
-  if (!kdmUtils::ReadFileToMemory(path, &raw) || raw.empty()) {
-    std::wcerr << L"[!] Failed to read " << path << L"\n";
     intel_driver::Unload();
     return INVALID_HANDLE_VALUE;
   }

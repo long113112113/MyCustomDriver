@@ -1,0 +1,22 @@
+-ID:\VS2022\VC\Tools\MSVC\14.44.35207\include
+-IC:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\km
+-IC:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared
+-IC:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\km\crt
+-IC:\Program Files (x86)\Windows Kits\10\Include\wdf\kmdf\1.35
+-Id:\PJ\KMDF Driver\Shared
+-Id:\PJ\KMDF Driver\Driver
+-D_AMD64_
+-DAMD64
+-D_WIN64
+-D_KERNEL_MODE
+-D_WIN32_WINNT=0x0A00
+-DWINVER=0x0A00
+-DWINNT=1
+-DNTDDI_VERSION=0x0A000010
+-DKMDF_VERSION_MAJOR=1
+-Wno-pragma-pack
+-Wno-unknown-pragmas
+-Wno-unused-command-line-argument
+-Wno-microsoft-include
+-fms-extensions
+-fms-compatibility

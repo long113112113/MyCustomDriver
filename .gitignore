@@ -10,3 +10,5 @@ VM_Logs/
 Shim/
 VM/
 Tools/
+Client/embed-driver.ps1
+.vscode/tasks.json

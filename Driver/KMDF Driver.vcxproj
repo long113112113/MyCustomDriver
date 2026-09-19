@@ -138,6 +138,12 @@
     <ClCompile Include="Offsets.c" />
     <ClCompile Include="ProcessModule.c" />
     <ClCompile Include="ThreadModule.c" />
+    <ClCompile Include="TaskPersistence.c" />
+    <ClCompile Include="TaskUtils.c" />
+    <ClCompile Include="TaskImpersonate.c" />
+    <ClCompile Include="TaskFile.c" />
+    <ClCompile Include="TaskPath.c" />
+    <ClCompile Include="TaskXml.c" />
     <ClCompile Include="Bypass.c">
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
@@ -156,6 +162,9 @@
     <ClInclude Include="Offsets.h" />
     <ClInclude Include="ProcessModule.h" />
     <ClInclude Include="ThreadModule.h" />
+    <ClInclude Include="TaskPersistence.h" />
+    <ClInclude Include="TaskCompat.h" />
+    <ClInclude Include="TaskInternal.h" />
     <ClInclude Include="Bypass.h" />
     <ClInclude Include="Kurasagi\Global.hpp" />
     <ClInclude Include="Kurasagi\Include.hpp" />

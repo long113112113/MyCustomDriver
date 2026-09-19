@@ -3,8 +3,47 @@ CompileFlags:
     - -Wno-pragma-pack
     - -Wno-unknown-pragmas
     - -Wno-unused-command-line-argument
+    - -Wno-microsoft-include
+    - -fms-extensions
+    - -fms-compatibility
     - -ID:/PJ/KMDF Driver/Shared
     - -ID:/PJ/KMDF Driver/Driver
+
+Diagnostics:
+  UnusedIncludes: None
+  Suppress:
+    - unused-includes
+    - -Wunused-includes
+
+
+---
+If:
+  PathMatch: Driver/.*
+CompileFlags:
+  Add:
+    - -D_AMD64_
+    - -DAMD64
+    - -D_WIN64
+    - -D_KERNEL_MODE
+    - -D_WIN32_WINNT=0x0A00
+    - -DWINVER=0x0A00
+    - -DWINNT=1
+    - -DNTDDI_VERSION=0x0A000010
+    - -DKMDF_VERSION_MAJOR=1
+    - -DKMDF_VERSION_MINOR=15
+
+---
+If:
+  PathMatch: Client/.*
+CompileFlags:
+  Add:
+    - -DWIN32_LEAN_AND_MEAN
+    - -D_CONSOLE
+    - -D_UNICODE
+    - -DUNICODE
+    - -D_WIN64
+    - -D_AMD64_
+    - -std=c++20
 
 ---
 If:
@@ -20,7 +59,3 @@ CompileFlags:
   Add:
     - -xc++
     - -std=c++20
-
----
-Diagnostics:
-  UnusedIncludes: None
