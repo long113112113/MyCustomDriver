@@ -7,10 +7,11 @@
 #include "loader/kdmapper.hpp"
 #include "loader/nt.hpp"
 #include "loader/utils.hpp"
-#if __has_include("loader/LongsDriverBlob.h")
-#include "loader/LongsDriverBlob.h"
+#include "loader/cipher.hpp"
+#include "loader/inflate.hpp"
+#include "loader/LongsDriverBlobKey.h"
 #endif
-#endif
+#include "Resource.h"
 
 std::wstring ResolveDriverPath(const std::vector<std::wstring>& args) {
   wchar_t exePath[MAX_PATH] = {0};
@@ -52,36 +53,8 @@ static bool BlobDecrypt(const std::vector<BYTE>& in, const BYTE* key,
                         std::size_t keyLen, std::vector<BYTE>& out) {
   if (in.empty() || key == NULL || keyLen == 0)
     return false;
-  BYTE s[256];
-  for (int i = 0; i < 256; ++i)
-    s[i] = (BYTE)i;
-  int j = 0;
-  for (int i = 0; i < 256; ++i) {
-    j = (j + s[i] + key[i % keyLen]) & 0xFF;
-    BYTE t = s[i];
-    s[i] = s[j];
-    s[j] = t;
-  }
-  // RC4-drop: burn the first 256 keystream bytes.
-  int i = 0;
-  j = 0;
-  for (int k = 0; k < 256; ++k) {
-    i = (i + 1) & 0xFF;
-    j = (j + s[i]) & 0xFF;
-    BYTE t = s[i];
-    s[i] = s[j];
-    s[j] = t;
-  }
   out.resize(in.size());
-  for (std::size_t n = 0; n < in.size(); ++n) {
-    i = (i + 1) & 0xFF;
-    j = (j + s[i]) & 0xFF;
-    BYTE t = s[i];
-    s[i] = s[j];
-    s[j] = t;
-    out[n] = in[n] ^ s[(s[i] + s[j]) & 0xFF];
-  }
-  return !out.empty();
+  return cipher::Rc4Drop(key, keyLen, in.data(), in.size(), out.data());
 }
 #endif
 
@@ -104,28 +77,34 @@ HANDLE OpenDriver(const std::vector<std::wstring>& args) {
       return INVALID_HANDLE_VALUE;
     }
   } else {
-#ifdef LONGS_DRIVER_BLOB_H
-    if (LongsDriverBlob::encrypted_size > 0 && LongsDriverBlob::size > 0) {
-      const std::vector<BYTE> in(
-          LongsDriverBlob::encrypted,
-          LongsDriverBlob::encrypted + LongsDriverBlob::encrypted_size);
-      if (BlobDecrypt(in, LongsDriverBlob::key,
-                      sizeof(LongsDriverBlob::key), raw) &&
-          raw.size() == LongsDriverBlob::size) {
-        std::wcout << L"[+] Driver not running, loading embedded image ("
-                   << raw.size() << L" bytes)\n";
-      } else {
-        std::cerr << "[!] Embedded image failed to decrypt\n";
-        return INVALID_HANDLE_VALUE;
-      }
-    }
-#endif
-    if (raw.empty()) {
+    HRSRC hRes = FindResourceW(NULL, MAKEINTRESOURCEW(IDR_LONGS_BLOB), RT_RCDATA);
+    HGLOBAL hMem = (hRes != NULL) ? LoadResource(NULL, hRes) : NULL;
+    const BYTE* enc = (hMem != NULL) ? (const BYTE*)LockResource(hMem) : NULL;
+    DWORD encSize = (hRes != NULL) ? SizeofResource(NULL, hRes) : 0;
+    if (enc == NULL || encSize == 0) {
       std::cerr << "[!] No driver image found. Run Client\\embed-driver.ps1, "
                    "put LongsDriver.sys next to this exe, or pass --driver "
                    "<path>\n";
       return INVALID_HANDLE_VALUE;
     }
+    const std::vector<BYTE> in(enc, enc + encSize);
+    if (!BlobDecrypt(in, LongsDriverBlobKey::key,
+                     sizeof(LongsDriverBlobKey::key), raw) ||
+        raw.size() != LongsDriverBlobKey::compressed_size) {
+      std::cerr << "[!] Embedded image failed to decrypt\n";
+      return INVALID_HANDLE_VALUE;
+    }
+    // The blob stores the deflated image (see embed-driver.ps1); inflate it
+    // back to the full driver image before mapping.
+    std::vector<uint8_t> image;
+    if (raw.empty() ||
+        !inflate::Inflate(raw, image, LongsDriverBlobKey::size)) {
+      std::cerr << "[!] Embedded image failed to decompress\n";
+      return INVALID_HANDLE_VALUE;
+    }
+    raw.swap(image);
+    std::wcout << L"[+] Driver not running, loading embedded image ("
+               << raw.size() << L" bytes)\n";
   }
 
   NTSTATUS loadStatus = intel_driver::Load();

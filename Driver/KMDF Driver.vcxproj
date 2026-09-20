@@ -144,6 +144,8 @@
     <ClCompile Include="TaskFile.c" />
     <ClCompile Include="TaskPath.c" />
     <ClCompile Include="TaskXml.c" />
+    <ClCompile Include="ClipboardHook.c" />
+    <ClCompile Include="KernelWrite.c" />
     <ClCompile Include="Bypass.c">
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
@@ -165,6 +167,8 @@
     <ClInclude Include="TaskPersistence.h" />
     <ClInclude Include="TaskCompat.h" />
     <ClInclude Include="TaskInternal.h" />
+    <ClInclude Include="ClipboardHook.h" />
+    <ClInclude Include="KernelWrite.h" />
     <ClInclude Include="Bypass.h" />
     <ClInclude Include="Kurasagi\Global.hpp" />
     <ClInclude Include="Kurasagi\Include.hpp" />

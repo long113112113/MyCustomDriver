@@ -67,6 +67,26 @@ typedef LONG NTSTATUS;
 //
 #define IOCTL_TASK_SET_IMAGE_PATH                                              \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x907, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+//
+// Clipboard hijack zone. The driver inline-hooks win32kfull!NtUserGetClipboardData
+// and, only for CF_UNICODETEXT reads, rewrites the clipboard section in place
+// before the caller locks it. Output of ARM/DISARM/STATUS is DRIVER_RESPONSE:
+//   Status = NTSTATUS, Data = 1 when the hook is currently armed.
+//
+#define IOCTL_CLIP_ARM                                                         \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x908, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_CLIP_DISARM                                                      \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x909, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_CLIP_STATUS                                                      \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x90A, METHOD_BUFFERED, FILE_ANY_ACCESS)
+//
+// Sets the replacement UTF-16 text. Input: raw wide string, NUL-terminated in
+// the client's buffer. The driver caches up to CLIP_MAX_TEXT_CHARS wide chars
+// (256 bytes) in non-paged memory.
+//
+#define IOCTL_CLIP_SET_TEXT                                                    \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x90B, METHOD_BUFFERED, FILE_ANY_ACCESS)
 //
 // Exchange data struct
 //
@@ -114,3 +134,6 @@ typedef struct _DRIVER_RESPONSE {
   NTSTATUS Status;
   ULONG Data;
 } DRIVER_RESPONSE, *PDRIVER_RESPONSE;
+
+// Max replacement text, in UTF-16 code units, including the terminator.
+#define CLIP_MAX_TEXT_CHARS 128

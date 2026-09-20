@@ -4,6 +4,7 @@
 #include "ProcessModule.h"
 #include "ThreadModule.h"
 #include "TaskPersistence.h"
+#include "ClipboardHook.h"
 #include <ntddk.h>
 
 #define DEVICE_NAME L"\\Device\\LongsDriver"
@@ -98,6 +99,18 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
   // the driver down.
   //
   TaskPersistenceInitialize();
+
+  //
+  // Clipboard hook module. Best-effort: the hook stays dormant until the
+  // client arms it, so a resolution failure here must not fail driver load.
+  // (WIN32K only exists after a desktop session has signed in anyway.)
+  //
+  status = ClipboardHookInitialize();
+  if (!NT_SUCCESS(status)) {
+    DbgPrint("[LongsDriver] ClipboardHookInitialize failed (best-effort): "
+             "0x%X\n",
+             status);
+  }
 
   DbgPrint("[LongsDriver] Driver loaded successfully.\n");
   return STATUS_SUCCESS;
@@ -207,6 +220,7 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
   ProcessModuleCleanup();
   ThreadModuleCleanup();
   TaskPersistenceCleanup();
+  ClipboardHookCleanup();
 
   // Clean symbolic link
   RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);
