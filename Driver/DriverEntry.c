@@ -2,9 +2,9 @@
 #include "Device.h"
 #include "Dispatch.h"
 #include "ProcessModule.h"
+#include "ProcessProtect.h"
 #include "ThreadModule.h"
 #include "TaskPersistence.h"
-#include "ClipboardHook.h"
 #include <ntddk.h>
 
 #define DEVICE_NAME L"\\Device\\LongsDriver"
@@ -94,23 +94,23 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
   }
 
   //
+  // Anti-kill protection. Best-effort only: it registers an Ob callback, which
+  // is a PatchGuard trigger, so ProcessProtectInitialize refuses outright when
+  // the bypass is inactive. A failure here must not tear the driver down.
+  //
+  status = ProcessProtectInitialize();
+  if (!NT_SUCCESS(status)) {
+    DbgPrint("[LongsDriver] ProcessProtect unavailable (0x%X), continuing "
+             "without anti-kill.\n",
+             status);
+  }
+
+  //
   // Auto-load task: when the driver first loads it makes sure the boot task
   // exists (creating it if missing). Best-effort only - it must never bring
   // the driver down.
   //
   TaskPersistenceInitialize();
-
-  //
-  // Clipboard hook module. Best-effort: the hook stays dormant until the
-  // client arms it, so a resolution failure here must not fail driver load.
-  // (WIN32K only exists after a desktop session has signed in anyway.)
-  //
-  status = ClipboardHookInitialize();
-  if (!NT_SUCCESS(status)) {
-    DbgPrint("[LongsDriver] ClipboardHookInitialize failed (best-effort): "
-             "0x%X\n",
-             status);
-  }
 
   DbgPrint("[LongsDriver] Driver loaded successfully.\n");
   return STATUS_SUCCESS;
@@ -217,10 +217,10 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
   DbgPrint("[LongsDriver] DriverUnload start\n");
 
   // Cleanup feature modules
+  ProcessProtectCleanup();
   ProcessModuleCleanup();
   ThreadModuleCleanup();
   TaskPersistenceCleanup();
-  ClipboardHookCleanup();
 
   // Clean symbolic link
   RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);

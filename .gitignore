@@ -12,3 +12,4 @@ VM/
 Tools/
 Client/embed-driver.ps1
 .vscode/tasks.json
+Client/loader/LongsDriverBlob.bin

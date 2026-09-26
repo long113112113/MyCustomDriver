@@ -2,10 +2,10 @@
 #include <intrin.h>
 
 //
-// Toggling CR0.WP only affects the current CPU. The ClipboardHook arm/disarm
-// paths are serialized through the device control dispatch (single client), so
-// a single CPU runs these writes. Raising to DPC_LEVEL plus masking
-// interrupts keeps the WP window bounded and non-interruptible.
+// Toggling CR0.WP only affects the current CPU. These writes are serialized
+// through the device control dispatch (single client), so a single CPU runs
+// them. Raising to DPC_LEVEL plus masking interrupts keeps the WP window
+// bounded and non-interruptible.
 //
 NTSTATUS KernelWrite(PVOID Destination, PVOID Source, SIZE_T Size) {
   if (Destination == NULL || Source == NULL || Size == 0) {
