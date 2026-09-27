@@ -52,8 +52,8 @@ static const ClientCommand kCommands[] = {
     {CMD_AUTO_LOAD, "Auto Load", false, NULL},
     {CMD_PROTECT_PROCESS, "Protect Process", true, "PID (Enter=target)"},
     {CMD_UNPROTECT_PROCESS, "Unprotect Process", true, "PID (Enter=target)"},
-    {CMD_LIST_PROTECTED, "List Protected", false, NULL},
-};
+      {CMD_LIST_PROTECTED, "List Protected", false, NULL},
+  };
 
 static std::string g_targetName;
 static ULONG g_targetPid = 0;
@@ -421,28 +421,70 @@ static void RunProtect(HANDLE h, ULONG pid, bool protect) {
   PROCESS_REQUEST req = {pid};
   DRIVER_RESPONSE r = {0};
   DWORD ret = 0;
+  const char* verb = protect ? "Protect" : "Unprotect";
+
+  // Catch a mistyped or non-numeric PID here: the driver rejects PID <= 4 and
+  // the NTSTATUS comes back to user mode as Win32 error 87, which is
+  // indistinguishable from a buffer-size failure.
+  if (pid <= SYSTEM_PROCESS_PID) {
+    std::cout << "  " << verb << ": PID " << pid
+              << " is not a user process (must be > "
+              << SYSTEM_PROCESS_PID << "). Use Find Target first.\n";
+    return;
+  }
+
+  std::cout << "  " << verb << " PID " << pid << " -> ";
   if (!DeviceIoControl(h, protect ? IOCTL_PROTECT_PROCESS
                                    : IOCTL_UNPROTECT_PROCESS,
                        &req, sizeof(req), &r, sizeof(r), &ret, NULL)) {
-    std::cout << "  " << (protect ? "Protect" : "Unprotect") << " failed (0x"
-              << std::hex << GetLastError() << std::dec << ")\n";
+    DWORD err = GetLastError();
+    std::cout << "failed (0x" << std::hex << err << std::dec << ")\n";
+    std::cout << "    run \"List Protected\" to see why the callback is not "
+                 "armed\n";
     return;
   }
   if (!NT_SUCCESS(r.Status)) {
-    std::cout << "  " << (protect ? "Protect" : "Unprotect")
-              << " refused: 0x" << std::hex << r.Status << std::dec;
+    std::cout << "refused, NTSTATUS 0x" << std::hex << r.Status << std::dec;
     if (r.Status == (NTSTATUS)0xC00400A0)
       std::cout << " (PatchGuard bypass inactive - feature disabled)";
     std::cout << "\n";
     return;
   }
-  std::cout << "  " << (protect ? "Protected" : "Unprotected") << " " << pid
-            << "\n";
+  std::cout << "ok\n";
 }
 
 static void RunProtectedList(HANDLE h) {
-  PROTECTED_PROCESS_LIST_RESPONSE resp = {0};
+  PROTECT_STATUS_RESPONSE st = {0};
   DWORD ret = 0;
+
+  if (DeviceIoControl(h, IOCTL_GET_PROTECT_STATUS, NULL, 0, &st, sizeof(st),
+                      &ret, NULL)) {
+    if (st.CallbackActive) {
+      std::cout << "  Callback: ARMED (InitStatus 0x" << std::hex
+                << st.InitStatus << std::dec << ")\n";
+    } else {
+      std::cout << "  Callback: DISARMED\n";
+      std::cout << "    InitStatus = 0x" << std::hex << st.InitStatus
+                << std::dec;
+      if (st.InitStatus == (NTSTATUS)0xC00400A0)
+        std::cout << " STATUS_DEVICE_CONFIGURATION_ERROR"
+                     " -> PatchGuard bypass inactive (safe mode)";
+      else if (st.InitStatus == (NTSTATUS)0xC0000022)
+        std::cout << " STATUS_ACCESS_DENIED"
+                     " -> kernel refused ObRegisterCallbacks"
+                     " (unsigned/mapped image, or FORCE_INTEGRITY)";
+      else if (st.InitStatus == (NTSTATUS)0xC000000D)
+        std::cout << " STATUS_INVALID_PARAMETER"
+                     " -> ObRegisterCallbacks rejected the registration"
+                     " (check the altitude string)";
+      std::cout << "\n";
+    }
+  } else {
+    std::cout << "  status query failed (0x" << std::hex << GetLastError()
+              << std::dec << ")\n";
+  }
+
+  PROTECTED_PROCESS_LIST_RESPONSE resp = {0};
   if (DeviceIoControl(h, IOCTL_LIST_PROTECTED_PROCESSES, NULL, 0, &resp,
                       sizeof(resp), &ret, NULL)) {
     std::cout << "  Protected: " << resp.Count;
@@ -452,6 +494,7 @@ static void RunProtectedList(HANDLE h) {
   }
 }
 
+//
 static void RunThreadList(HANDLE h) {
   THREAD_LIST_RESPONSE resp = {0};
   DWORD ret = 0;
@@ -575,7 +618,9 @@ int wmain(int argc, wchar_t* argv[]) {
         if (!line.empty()) {
           params[i] = strtoul(line.c_str(), NULL, 0);
         } else if (cmds[i] == CMD_HIDE_PROCESS ||
-                   cmds[i] == CMD_UNHIDE_PROCESS) {
+                   cmds[i] == CMD_UNHIDE_PROCESS ||
+                   cmds[i] == CMD_PROTECT_PROCESS ||
+                   cmds[i] == CMD_UNPROTECT_PROCESS) {
           params[i] = g_targetPid ? g_targetPid : GetCurrentProcessId();
         } else {
           params[i] = g_targetTid ? g_targetTid : GetCurrentThreadId();
@@ -629,7 +674,7 @@ int wmain(int argc, wchar_t* argv[]) {
       case CMD_LIST_PROTECTED:
         RunProtectedList(hDevice);
         break;
-      case CMD_HIDE_THREAD: {
+  case CMD_HIDE_THREAD: {
         THREAD_REQUEST req = {params[i]};
         std::cout << "  Hide Thread " << params[i] << " -> "
                   << (SendCtrl(hDevice, IOCTL_HIDE_THREAD, &req, sizeof(req))

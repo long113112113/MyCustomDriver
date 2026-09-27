@@ -219,23 +219,29 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
   // Process anti-kill module (see ProcessProtect.c)
   // ------------------------------------------------------
   case IOCTL_PROTECT_PROCESS:
-    DbgPrint("PROTECT_PROCESS requested.\n");
+    DbgPrint("PROTECT_PROCESS requested. inLen=%lu outLen=%lu\n", inputLength,
+             outputLength);
     if (inputLength == sizeof(PROCESS_REQUEST)) {
       PROCESS_REQUEST req = *(PPROCESS_REQUEST)inputBuffer;
+      DbgPrint("  pid=%lu\n", req.ProcessId);
       status = ProcessProtect(req.ProcessId);
       bytesReturned = 0;
     } else {
+      DbgPrint("  bad input size, expected %lu\n", sizeof(PROCESS_REQUEST));
       status = STATUS_INVALID_BUFFER_SIZE;
     }
     break;
 
   case IOCTL_UNPROTECT_PROCESS:
-    DbgPrint("UNPROTECT_PROCESS requested.\n");
+    DbgPrint("UNPROTECT_PROCESS requested. inLen=%lu outLen=%lu\n",
+             inputLength, outputLength);
     if (inputLength == sizeof(PROCESS_REQUEST)) {
       PROCESS_REQUEST req = *(PPROCESS_REQUEST)inputBuffer;
+      DbgPrint("  pid=%lu\n", req.ProcessId);
       status = ProcessUnprotect(req.ProcessId);
       bytesReturned = 0;
     } else {
+      DbgPrint("  bad input size, expected %lu\n", sizeof(PROCESS_REQUEST));
       status = STATUS_INVALID_BUFFER_SIZE;
     }
     break;
@@ -246,6 +252,17 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
       status =
           ProcessListProtected((PPROTECTED_PROCESS_LIST_RESPONSE)outputBuffer);
       bytesReturned = sizeof(PROTECTED_PROCESS_LIST_RESPONSE);
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+
+  case IOCTL_GET_PROTECT_STATUS:
+    DbgPrint("GET_PROTECT_STATUS requested.\n");
+    if (outputLength == sizeof(PROTECT_STATUS_RESPONSE)) {
+      status = ProcessProtectQueryStatus(
+          (PPROTECT_STATUS_RESPONSE)outputBuffer);
+      bytesReturned = sizeof(PROTECT_STATUS_RESPONSE);
     } else {
       status = STATUS_INVALID_BUFFER_SIZE;
     }

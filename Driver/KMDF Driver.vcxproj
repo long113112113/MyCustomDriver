@@ -88,8 +88,9 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\Shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <LanguageStandard>stdcpp20</LanguageStandard>
+        <AdditionalIncludeDirectories>$(ProjectDir)..\Shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+        <LanguageStandard>stdcpp20</LanguageStandard>
+        <PreprocessorDefinitions>POOL_NX_OPTIN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -103,8 +104,9 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\Shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+        <AdditionalIncludeDirectories>$(ProjectDir)..\Shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+        <LanguageStandard>stdcpp17</LanguageStandard>
+        <PreprocessorDefinitions>POOL_NX_OPTIN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -138,7 +140,8 @@
     <ClCompile Include="Offsets.c" />
     <ClCompile Include="ProcessModule.c" />
     <ClCompile Include="ProcessProtect.c" />
-    <ClCompile Include="ThreadModule.c" />
+      <ClCompile Include="ObGatePatch.c" />
+      <ClCompile Include="ThreadModule.c" />
     <ClCompile Include="TaskPersistence.c" />
     <ClCompile Include="TaskUtils.c" />
     <ClCompile Include="TaskImpersonate.c" />
@@ -158,13 +161,23 @@
     <ClCompile Include="Kurasagi\Util\Arith.cpp" />
     <ClCompile Include="Kurasagi\Util\Memory.cpp" />
   </ItemGroup>
+  <!--
+    Zydis/Zycore was vendored here for Probe\ProbeGadgets.c, the FF E1 gadget
+    scanner. That scanner walked .pdata CFGs across every loaded module and
+    produced no usable gadget: all 49 candidates were mid-instruction or
+    unreachable. The callback gate is now relaxed directly in
+    ObRegisterCallbacks (see ObGatePatch.c), so the dependency was removed
+    instead of being carried in a kernel image. Re-adding it means re-vendoring
+    ~28k lines and reintroducing the IOCTL_PROBE_CALLBACK_MODULES operation.
+  -->
   <ItemGroup>
     <ClInclude Include="Device.h" />
     <ClInclude Include="Dispatch.h" />
     <ClInclude Include="Offsets.h" />
     <ClInclude Include="ProcessModule.h" />
     <ClInclude Include="ProcessProtect.h" />
-    <ClInclude Include="ThreadModule.h" />
+      <ClInclude Include="ObGatePatch.h" />
+      <ClInclude Include="ThreadModule.h" />
     <ClInclude Include="TaskPersistence.h" />
     <ClInclude Include="TaskCompat.h" />
     <ClInclude Include="TaskInternal.h" />

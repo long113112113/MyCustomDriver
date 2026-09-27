@@ -63,6 +63,26 @@ typedef LONG NTSTATUS;
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x909, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_LIST_PROTECTED_PROCESSES                                         \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x90A, METHOD_BUFFERED, FILE_ANY_ACCESS)
+//
+// Reports whether anti-kill is armed, and if not, why. Output
+// PROTECT_STATUS_RESPONSE.
+//
+#define IOCTL_GET_PROTECT_STATUS                                               \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x90B, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+//
+// Code 0x90C is retired: it was IOCTL_PROBE_CALLBACK_MODULES, the callback
+// module scanner. That direction produced no usable gadget and the gate is now
+// relaxed directly in ObRegisterCallbacks, so the operation and its response
+// structure were removed. The slot stays reserved rather than being reused, so
+// a stale client cannot accidentally reach a different handler.
+//
+#define IOCTL_RETIRED_PROBE_CALLBACK_MODULES 0x90C
+
+//
+// Codes 0x90D upward are free. Allocate the next new operation from 0x90D to
+// keep the driver's dispatch table contiguous.
+//
 
 //
 // Exchange data struct
@@ -77,6 +97,11 @@ typedef LONG NTSTATUS;
 typedef struct _TASK_REQUEST {
   ULONG Operation;
 } TASK_REQUEST, *PTASK_REQUEST;
+
+// Lowest PID that is a real user process. PIDs 0-4 are the idle process,
+// the System process and its threads, none of which may be hidden or
+// protected.
+#define SYSTEM_PROCESS_PID 4
 
 // Max number of processes tracked in the hidden registry.
 #define MAX_HIDDEN_PROCESSES 64
@@ -108,12 +133,28 @@ typedef struct _THREAD_LIST_RESPONSE {
   ULONG Count;
   ULONG ThreadIds[MAX_HIDDEN_THREADS];
 } THREAD_LIST_RESPONSE, *PTHREAD_LIST_RESPONSE;
-
 // Output of IOCTL_LIST_PROTECTED_PROCESSES.
 typedef struct _PROTECTED_PROCESS_LIST_RESPONSE {
   ULONG Count;
   ULONG ProcessIds[MAX_PROTECTED_PROCESSES];
-} PROTECTED_PROCESS_LIST_RESPONSE, *PPROTECTED_PROCESS_LIST_RESPONSE;
+} PROTECTED_PROCESS_LIST_RESPONSE,
+    *PPROTECTED_PROCESS_LIST_RESPONSE;
+
+// Output of IOCTL_GET_PROTECT_STATUS.
+typedef struct _PROTECT_STATUS_RESPONSE {
+  // Status the module returned from ProcessProtectInitialize. STATUS_SUCCESS
+  // means the Ob callback is registered.
+  NTSTATUS InitStatus;
+  // 1 when the callback handle is live, 0 otherwise.
+  ULONG CallbackActive;
+  // Number of PIDs currently in the protected registry.
+  ULONG Count;
+} PROTECT_STATUS_RESPONSE, *PPROTECT_STATUS_RESPONSE;
+
+//
+// The CALLBACK_MODULE_HIT / CALLBACK_MODULE_PROBE_RESPONSE structures that
+// accompanied IOCTL_PROBE_CALLBACK_MODULES were removed together with it.
+//
 
 // default response
 typedef struct _DRIVER_RESPONSE {

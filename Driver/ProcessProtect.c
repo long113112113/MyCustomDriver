@@ -4,7 +4,7 @@
 #include <ntifs.h>
 #include "ProcessProtect.h"
 #include "Bypass.h"
-#include "ProcessModule.h"
+#include "ObGatePatch.h"
 
 //
 // Process access rights (winnt.h equivalents for kernel mode)
@@ -27,8 +27,6 @@
    PROCESS_SET_INFORMATION | PROCESS_SUSPEND_RESUME |                         \
    PROCESS_SET_LIMITED_INFORMATION)
 
-#define PROCESS_PROTECT_ALTITUDE L"31105.6171"
-
 //
 // Protected process list state
 //
@@ -36,6 +34,11 @@ static ULONG g_ProtectedProcesses[MAX_PROTECTED_PROCESSES];
 static ULONG g_ProtectedProcessCount = 0;
 static FAST_MUTEX g_ProtectedListLock;
 static PVOID g_ObCallbackHandle = NULL;
+//
+// NTSTATUS the module returned from ProcessProtectInitialize. Kept so the
+// client can be told why the feature is dead without attaching a debugger.
+//
+static NTSTATUS g_InitStatus = STATUS_UNSUCCESSFUL;
 
 static BOOLEAN IsValidProcessId(ULONG ProcessId) {
   return ProcessId > SYSTEM_PROCESS_PID;
@@ -132,6 +135,7 @@ static OB_PREOP_CALLBACK_STATUS OnPreOpenProcess(
 //
 NTSTATUS ProcessProtectInitialize(VOID) {
   NTSTATUS status;
+  NTSTATUS gateStatus;
   OB_OPERATION_REGISTRATION operations[1];
   OB_CALLBACK_REGISTRATION registration;
   UNICODE_STRING altitude;
@@ -139,14 +143,29 @@ NTSTATUS ProcessProtectInitialize(VOID) {
   ExInitializeFastMutex(&g_ProtectedListLock);
   g_ProtectedProcessCount = 0;
   g_ObCallbackHandle = NULL;
+  g_InitStatus = STATUS_UNSUCCESSFUL;
 
   if (!g_PatchGuardBypassed) {
+    g_InitStatus = STATUS_DEVICE_CONFIGURATION_ERROR;
     DbgPrint("[LongsDriver] ProcessProtect: skipped, PatchGuard bypass "
              "inactive (safe mode).\n");
-    return STATUS_DEVICE_CONFIGURATION_ERROR;
+    return g_InitStatus;
   }
 
   RtlInitUnicodeString(&altitude, PROCESS_PROTECT_ALTITUDE);
+
+  //
+  // ObRegisterCallbacks refuses callbacks that are not backed by a loader
+  // entry, which is exactly our manually mapped code. Relax that gate first.
+  // A failure here is not fatal on its own: registration will simply be
+  // denied, which the existing status handling already reports.
+  //
+  gateStatus = ObGatePatchApply();
+  if (!NT_SUCCESS(gateStatus)) {
+    DbgPrint("[LongsDriver] ProcessProtect: callback gate patch unavailable "
+             "(0x%X).\n",
+             gateStatus);
+  }
 
   RtlZeroMemory(operations, sizeof(operations));
   operations[0].ObjectType = PsProcessType;
@@ -163,8 +182,13 @@ NTSTATUS ProcessProtectInitialize(VOID) {
   registration.OperationRegistration = operations;
 
   status = ObRegisterCallbacks(&registration, &g_ObCallbackHandle);
+  g_InitStatus = status;
   if (!NT_SUCCESS(status)) {
     g_ObCallbackHandle = NULL;
+    //
+    // Nothing is registered, so there is no reason to keep the gate relaxed.
+    //
+    ObGatePatchRevert();
     DbgPrint("[LongsDriver] ProcessProtect: ObRegisterCallbacks failed 0x%X "
              "(feature disabled).\n",
              status);
@@ -186,6 +210,12 @@ VOID ProcessProtectCleanup(VOID) {
     DbgPrint("[LongsDriver] ProcessProtect: Ob callback unregistered.\n");
   }
 
+  //
+  // Restore ntoskrnl only after the callback is gone, so nothing can call
+  // through the relaxed gate while the original validation is being restored.
+  //
+  ObGatePatchRevert();
+
   ExAcquireFastMutex(&g_ProtectedListLock);
   for (i = 0; i < g_ProtectedProcessCount; i++)
     g_ProtectedProcesses[i] = 0;
@@ -199,29 +229,67 @@ BOOLEAN ProcessProtectAvailable(VOID) {
   return (BOOLEAN)(g_ObCallbackHandle != NULL);
 }
 
-NTSTATUS ProcessProtect(ULONG ProcessId) {
-  if (!ProcessProtectAvailable())
-    return STATUS_DEVICE_CONFIGURATION_ERROR;
-
-  if (!IsValidProcessId(ProcessId))
+//
+// Reports the registration outcome so the client can explain a dead feature
+// without a debugger attached.
+//
+NTSTATUS ProcessProtectQueryStatus(PPROTECT_STATUS_RESPONSE Response) {
+  if (!Response)
     return STATUS_INVALID_PARAMETER;
 
-  if (!AddProtectedProcess(ProcessId))
+  Response->InitStatus = g_InitStatus;
+  Response->CallbackActive = (ULONG)(g_ObCallbackHandle != NULL);
+
+  ExAcquireFastMutex(&g_ProtectedListLock);
+  Response->Count = g_ProtectedProcessCount;
+  ExReleaseFastMutex(&g_ProtectedListLock);
+
+  return STATUS_SUCCESS;
+}
+
+NTSTATUS ProcessProtect(ULONG ProcessId) {
+  if (!ProcessProtectAvailable()) {
+    DbgPrint("[LongsDriver] ProcessProtect(%lu) refused: Ob callback not "
+             "registered.\n",
+             ProcessId);
+    return STATUS_DEVICE_CONFIGURATION_ERROR;
+  }
+
+  if (!IsValidProcessId(ProcessId)) {
+    DbgPrint("[LongsDriver] ProcessProtect(%lu) refused: PID must be > %d.\n",
+             ProcessId, SYSTEM_PROCESS_PID);
+    return STATUS_INVALID_PARAMETER;
+  }
+
+  if (!AddProtectedProcess(ProcessId)) {
+    DbgPrint("[LongsDriver] ProcessProtect(%lu) refused: list rejected it.\n",
+             ProcessId);
     return STATUS_INSUFFICIENT_RESOURCES;
+  }
 
   DbgPrint("[LongsDriver] Protected process %lu against kill.\n", ProcessId);
   return STATUS_SUCCESS;
 }
 
 NTSTATUS ProcessUnprotect(ULONG ProcessId) {
-  if (!ProcessProtectAvailable())
+  if (!ProcessProtectAvailable()) {
+    DbgPrint("[LongsDriver] ProcessUnprotect(%lu) refused: Ob callback not "
+             "registered.\n",
+             ProcessId);
     return STATUS_DEVICE_CONFIGURATION_ERROR;
+  }
 
-  if (!IsValidProcessId(ProcessId))
+  if (!IsValidProcessId(ProcessId)) {
+    DbgPrint("[LongsDriver] ProcessUnprotect(%lu) refused: PID must be > %d.\n",
+             ProcessId, SYSTEM_PROCESS_PID);
     return STATUS_INVALID_PARAMETER;
+  }
 
-  if (!RemoveProtectedProcess(ProcessId))
+  if (!RemoveProtectedProcess(ProcessId)) {
+    DbgPrint("[LongsDriver] ProcessUnprotect(%lu) refused: not in list.\n",
+             ProcessId);
     return STATUS_NOT_FOUND;
+  }
 
   DbgPrint("[LongsDriver] Unprotected process %lu.\n", ProcessId);
   return STATUS_SUCCESS;

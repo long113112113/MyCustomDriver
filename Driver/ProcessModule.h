@@ -2,9 +2,6 @@
 #include <ntddk.h>
 #include "Shared.h"
 
-// Never Hide
-#define SYSTEM_PROCESS_PID 4
-
 //
 // DKOM process module lifecycle. Invoked from DriverEntry / DriverUnload.
 //
