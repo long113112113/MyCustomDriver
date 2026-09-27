@@ -12,6 +12,11 @@ extern "C" BOOLEAN BypassPatchGuard(void) {
     return FALSE;
   }
 
+  if (gl::RtVar::MmAccessFaultPtr == NULL) {
+    LogError("[Kurasagi]: Bypass Failed - MmAccessFaultPtr is NULL.");
+    return FALSE;
+  }
+
   if (*(UCHAR *)gl::RtVar::MmAccessFaultPtr == 0xFF) {
     LogInfo("[Kurasagi]: PatchGuard already bypassed this boot, skipping.");
     return TRUE;
