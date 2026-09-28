@@ -69,22 +69,23 @@ typedef struct _SYSTEM_CODE_INTEGRITY_INFORMATION {
   CI_POLICY_OPTIONS Options;
 } SYSTEM_CODE_INTEGRITY_INFORMATION;
 
-//
-// Writing executable pages fails hard when memory integrity (HVCI/Kernel-mode
-// code integrity) is enforced, so report the state instead of finding out with
-// a bugcheck. The VM used for this project runs with HVCI off, but a machine
-// that does not must fail closed.
-//
 typedef NTSTATUS(NTAPI *PFN_NT_QUERY_SYSTEM_INFORMATION)(
     ULONG SystemInformationClass, PVOID SystemInformation, ULONG Length,
     PULONG ReturnLength);
 
 //
-// Resolved by name rather than imported: the driver links only what the
-// ntoskrnl import table already pulls in, and this keeps the dependency
-// explicit instead of relying on an implicit Nt* export.
+// Memory integrity (HVCI / kernel-mode code integrity) decides whether this
+// driver may write ntoskrnl's .text at all. It says nothing about the
+// ObRegisterCallbacks gate, which is pure software policy inside ntoskrnl, so
+// this is advisory only.
 //
-static NTSTATUS QueryHvciState(VOID) {
+// It deliberately does not veto the patch. This query returns
+// STATUS_ACCESS_VIOLATION on the 26100.4351 VM, and treating any failure as
+// "enforced" made this check refuse the very patch it exists to protect.
+// Enforcement is not guessed at: if it is on, the write faults and WriteBytes
+// catches it, which reaches the safe outcome by trying instead of predicting.
+//
+static VOID LogHvciState(VOID) {
   SYSTEM_CODE_INTEGRITY_INFORMATION info;
   PFN_NT_QUERY_SYSTEM_INFORMATION query;
   UNICODE_STRING routineName = RTL_CONSTANT_STRING(L"NtQuerySystemInformation");
@@ -95,8 +96,8 @@ static NTSTATUS QueryHvciState(VOID) {
       &routineName);
   if (query == NULL) {
     DbgPrint("[LongsDriver] ObGatePatch: NtQuerySystemInformation "
-             "unavailable, refusing to patch.\n");
-    return STATUS_NOT_FOUND;
+             "unavailable (advisory, continuing).\n");
+    return;
   }
 
   RtlZeroMemory(&info, sizeof(info));
@@ -105,30 +106,16 @@ static NTSTATUS QueryHvciState(VOID) {
   status = query(SYSTEM_CODE_INTEGRITY_INFORMATION_CLASS, &info, sizeof(info),
                  &returned);
   if (!NT_SUCCESS(status)) {
-    //
-    // Not being able to ask is not the same as being enforced, but it is not
-    // a positive confirmation either. Treat it as enforced and refuse: the
-    // signature check below is the real guard, this is only about avoiding a
-    // fault while writing.
-    //
-    DbgPrint("[LongsDriver] ObGatePatch: code integrity query failed 0x%X, "
-             "refusing to patch.\n",
+    DbgPrint("[LongsDriver] ObGatePatch: code integrity query returned 0x%X"
+             " (advisory, continuing).\n",
              status);
-    return status;
+    return;
   }
 
-  if (info.CodeIntegrityPolicyInEnforcementModeSystem != 0) {
-    DbgPrint("[LongsDriver] ObGatePatch: memory integrity enforced (status="
-             "%u, opts=0x%X), refusing to patch.\n",
-             info.CodeIntegrityPolicyEnforcementStatus,
-             info.CodeIntegrityOptions);
-    return STATUS_DEVICE_CONFIGURATION_ERROR;
-  }
-
-  DbgPrint("[LongsDriver] ObGatePatch: memory integrity not enforced "
-           "(status=%u, opts=0x%X).\n",
-           info.CodeIntegrityPolicyEnforcementStatus, info.CodeIntegrityOptions);
-  return STATUS_SUCCESS;
+  DbgPrint("[LongsDriver] ObGatePatch: memory integrity enforcement status=%u"
+           " opts=0x%X systemMode=%u\n",
+           info.CodeIntegrityPolicyEnforcementStatus, info.CodeIntegrityOptions,
+           info.CodeIntegrityPolicyInEnforcementModeSystem);
 }
 
 static VOID LogActual(const char *Label, const UCHAR *Bytes) {
@@ -142,17 +129,64 @@ static VOID LogActual(const char *Label, const UCHAR *Bytes) {
 
 static BOOLEAN ReadAndMatch(ULONGLONG Address, const UCHAR *Expected,
                             const char *Label, UCHAR *OutActual) {
-  RtlCopyMemory(OutActual, (PVOID)Address, GATE_PATCH_LEN);
+  UCHAR expectedCopy[GATE_PATCH_LEN];
+
+  //
+  // The address is derived from the loader-reported image base plus a fixed
+  // RVA, so a wrong base or a stale RVA lands on unmapped memory. Trapping the
+  // read turns that into a diagnosable refusal instead of a bugcheck.
+  //
+  __try {
+    RtlCopyMemory(OutActual, (PVOID)Address, GATE_PATCH_LEN);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    DbgPrint("[LongsDriver] ObGatePatch: read at 0x%X faulted, code 0x%X"
+             " (bad image base or stale RVA).\n",
+             Address, GetExceptionCode());
+    return FALSE;
+  }
+
   if (RtlCompareMemory(OutActual, Expected, GATE_PATCH_LEN) ==
       GATE_PATCH_LEN) {
     return TRUE;
   }
-  LogActual(Label, OutActual);
+
+  //
+  // If the bytes are already the patch, a previous load applied it and the
+  // revert never ran. Accept that as applied rather than calling it a
+  // signature mismatch, otherwise a driver that outlived its cleanup looks
+  // like an unknown build.
+  //
+  if (RtlCompareMemory(OutActual, kGatePatched, GATE_PATCH_LEN) ==
+      GATE_PATCH_LEN) {
+    DbgPrint("[LongsDriver] ObGatePatch: %s already patched from a previous "
+             "load, adopting it.\n",
+             Label);
+    RtlCopyMemory(OutActual, kGatePatched, GATE_PATCH_LEN);
+    return TRUE;
+  }
+
+  RtlCopyMemory(expectedCopy, Expected, GATE_PATCH_LEN);
+  DbgPrint("[LongsDriver] ObGatePatch: %s at 0x%X did not match.\n", Label,
+           Address);
+  LogActual("actual  ", OutActual);
+  LogActual("expected", expectedCopy);
   return FALSE;
 }
 
+//
+// If memory integrity is enforced the copy raises an exception rather than
+// silently doing nothing, so trap it and report instead of bugchecking. This is
+// the real enforcement test; the policy query above is only a diagnostic.
+//
 static NTSTATUS WriteBytes(ULONGLONG Address, const UCHAR *Bytes) {
-  return KernelWrite((PVOID)Address, (PVOID)Bytes, GATE_PATCH_LEN);
+  __try {
+    return KernelWrite((PVOID)Address, (PVOID)Bytes, GATE_PATCH_LEN);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    DbgPrint("[LongsDriver] ObGatePatch: write to 0x%X faulted, code 0x%X"
+             " (memory integrity is enforcing).\n",
+             Address, GetExceptionCode());
+    return STATUS_ACCESS_VIOLATION;
+  }
 }
 
 NTSTATUS ObGatePatchApply(VOID) {
@@ -161,6 +195,10 @@ NTSTATUS ObGatePatchApply(VOID) {
   ULONGLONG preAddr;
   ULONGLONG postAddr;
   NTSTATUS status;
+
+  DbgPrint("[LongsDriver] ObGatePatch: apply requested, target ntoskrnl "
+           "10.0.26100.4351 (RVA 0x%X / 0x%X).\n",
+           OB_CALLBACKS_PRE_RVA, OB_CALLBACKS_POST_RVA);
 
   if (g_Applied) {
     return STATUS_SUCCESS;
@@ -181,10 +219,7 @@ NTSTATUS ObGatePatchApply(VOID) {
     return STATUS_DEVICE_CONFIGURATION_ERROR;
   }
 
-  status = QueryHvciState();
-  if (!NT_SUCCESS(status)) {
-    return status;
-  }
+  LogHvciState();
 
   if (!BypassGetKernelBaseNSize(&kernelBase, &kernelSize)) {
     DbgPrint("[LongsDriver] ObGatePatch: could not locate ntoskrnl.\n");

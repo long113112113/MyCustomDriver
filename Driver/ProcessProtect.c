@@ -35,6 +35,13 @@ static ULONG g_ProtectedProcessCount = 0;
 static FAST_MUTEX g_ProtectedListLock;
 static PVOID g_ObCallbackHandle = NULL;
 //
+// Sentinel for "ObGatePatchApply was never reached", so a status query issued
+// before initialization is distinguishable from a real failure. Not a
+// documented NTSTATUS: it is reported as-is and the client prints it verbatim.
+//
+#define GATE_PATCH_NOT_ATTEMPTED ((NTSTATUS)0xFFFFFFFF)
+static NTSTATUS g_GatePatchStatus = GATE_PATCH_NOT_ATTEMPTED;
+//
 // NTSTATUS the module returned from ProcessProtectInitialize. Kept so the
 // client can be told why the feature is dead without attaching a debugger.
 //
@@ -161,9 +168,15 @@ NTSTATUS ProcessProtectInitialize(VOID) {
   // denied, which the existing status handling already reports.
   //
   gateStatus = ObGatePatchApply();
+  g_GatePatchStatus = gateStatus;
   if (!NT_SUCCESS(gateStatus)) {
+    //
+    // Registration is about to fail with STATUS_ACCESS_DENIED, and that status
+    // says nothing about why. Spell out the real reason here, and keep it
+    // queryable, so a dead feature is not mistaken for a policy refusal.
+    //
     DbgPrint("[LongsDriver] ProcessProtect: callback gate patch unavailable "
-             "(0x%X).\n",
+             "(0x%X); ObRegisterCallbacks will be refused next.\n",
              gateStatus);
   }
 
@@ -239,6 +252,8 @@ NTSTATUS ProcessProtectQueryStatus(PPROTECT_STATUS_RESPONSE Response) {
 
   Response->InitStatus = g_InitStatus;
   Response->CallbackActive = (ULONG)(g_ObCallbackHandle != NULL);
+  Response->GatePatchStatus = g_GatePatchStatus;
+  Response->GatePatchApplied = (ULONG)ObGatePatchIsApplied();
 
   ExAcquireFastMutex(&g_ProtectedListLock);
   Response->Count = g_ProtectedProcessCount;

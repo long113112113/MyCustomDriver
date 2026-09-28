@@ -149,6 +149,15 @@ typedef struct _PROTECT_STATUS_RESPONSE {
   ULONG CallbackActive;
   // Number of PIDs currently in the protected registry.
   ULONG Count;
+  // Status ObGatePatchApply returned before registration was attempted. This
+  // separates "the gate was never relaxed" from "the gate was relaxed and still
+  // refused": STATUS_REVISION_MISMATCH means the ntoskrnl bytes did not match
+  // the recorded signature, STATUS_DEVICE_CONFIGURATION_ERROR means the patch
+  // was deliberately declined (PatchGuard inactive, or memory integrity
+  // enforced), STATUS_NOT_FOUND means ntoskrnl could not be located.
+  NTSTATUS GatePatchStatus;
+  // 1 while the patched bytes are installed in ntoskrnl, 0 otherwise.
+  ULONG GatePatchApplied;
 } PROTECT_STATUS_RESPONSE, *PPROTECT_STATUS_RESPONSE;
 
 //

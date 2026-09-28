@@ -461,7 +461,9 @@ static void RunProtectedList(HANDLE h) {
                       &ret, NULL)) {
     if (st.CallbackActive) {
       std::cout << "  Callback: ARMED (InitStatus 0x" << std::hex
-                << st.InitStatus << std::dec << ")\n";
+                << st.InitStatus << std::dec << ", gate patch 0x" << st.GatePatchStatus
+                << (st.GatePatchApplied ? ", applied" : ", NOT applied")
+                << ")\n";
     } else {
       std::cout << "  Callback: DISARMED\n";
       std::cout << "    InitStatus = 0x" << std::hex << st.InitStatus
@@ -471,13 +473,45 @@ static void RunProtectedList(HANDLE h) {
                      " -> PatchGuard bypass inactive (safe mode)";
       else if (st.InitStatus == (NTSTATUS)0xC0000022)
         std::cout << " STATUS_ACCESS_DENIED"
-                     " -> kernel refused ObRegisterCallbacks"
-                     " (unsigned/mapped image, or FORCE_INTEGRITY)";
+                     " -> ntoskrnl refused the callback";
       else if (st.InitStatus == (NTSTATUS)0xC000000D)
         std::cout << " STATUS_INVALID_PARAMETER"
                      " -> ObRegisterCallbacks rejected the registration"
                      " (check the altitude string)";
       std::cout << "\n";
+
+      //
+      // ACCESS_DENIED on its own is ambiguous: it is what the gate returns
+      // whether or not we managed to patch it. Report the patch result
+      // separately so the two causes are not conflated.
+      //
+      std::cout << "    GatePatchStatus = 0x" << std::hex << st.GatePatchStatus
+                << std::dec << " ";
+      if (st.GatePatchApplied) {
+        std::cout << "(patched, gate relaxed - refusal came from elsewhere)\n";
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC00002FD) {
+        std::cout << "STATUS_REVISION_MISMATCH"
+                  << " -> ntoskrnl bytes differ from the recorded signature,"
+                     " patch refused; see DbgPrint for actual bytes\n";
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC00400A0) {
+        std::cout << "STATUS_DEVICE_CONFIGURATION_ERROR"
+                  << " -> patch declined on purpose (PatchGuard inactive,"
+                     " or memory integrity enforced)\n";
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC000000D) {
+        std::cout << "STATUS_NOT_FOUND"
+                  << " -> ntoskrnl image base could not be resolved\n";
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC00000BB) {
+        std::cout << "STATUS_NOT_SUPPORTED"
+                  << " -> not at PASSIVE_LEVEL when the patch was attempted\n";
+      } else if (st.GatePatchStatus == (NTSTATUS)0xFFFFFFFF) {
+        std::cout << "(apply never reached - PatchGuard bypass was inactive,"
+                   " so registration was never attempted)\n";
+      } else if (NT_SUCCESS(st.GatePatchStatus)) {
+        std::cout << "(success, but already reverted - patch was applied then"
+                     " rolled back)\n";
+      } else {
+        std::cout << "(see DbgPrint for the reason)\n";
+      }
     }
   } else {
     std::cout << "  status query failed (0x" << std::hex << GetLastError()
