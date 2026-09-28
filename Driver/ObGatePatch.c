@@ -44,6 +44,7 @@ static UCHAR g_PostSaved[GATE_PATCH_LEN];
 static BOOLEAN g_PreSavedOk;
 static BOOLEAN g_PostSavedOk;
 static BOOLEAN g_Applied;
+static BOOLEAN g_RestoredAny;
 
 #define SYSTEM_CODE_INTEGRITY_INFORMATION_CLASS 103
 
@@ -127,9 +128,20 @@ static VOID LogActual(const char *Label, const UCHAR *Bytes) {
   DbgPrint("\n");
 }
 
+//
+// Returns TRUE when the bytes at Address are either the expected original or
+// an already-installed patch. OutActual receives the bytes that were found.
+// OutRestorable distinguishes the two: it is TRUE only when OutActual holds
+// the real original, meaning a revert can put the kernel back. An adopted
+// patch carries no original, so it must be reported as not restorable rather
+// than having the patch written back over itself.
+//
 static BOOLEAN ReadAndMatch(ULONGLONG Address, const UCHAR *Expected,
-                            const char *Label, UCHAR *OutActual) {
+                            const char *Label, UCHAR *OutActual,
+                            BOOLEAN *OutRestorable) {
   UCHAR expectedCopy[GATE_PATCH_LEN];
+
+  *OutRestorable = FALSE;
 
   //
   // The address is derived from the loader-reported image base plus a fixed
@@ -147,21 +159,22 @@ static BOOLEAN ReadAndMatch(ULONGLONG Address, const UCHAR *Expected,
 
   if (RtlCompareMemory(OutActual, Expected, GATE_PATCH_LEN) ==
       GATE_PATCH_LEN) {
+    *OutRestorable = TRUE;
     return TRUE;
   }
 
   //
-  // If the bytes are already the patch, a previous load applied it and the
-  // revert never ran. Accept that as applied rather than calling it a
-  // signature mismatch, otherwise a driver that outlived its cleanup looks
-  // like an unknown build.
+  // If the bytes are already the patch, a previous load applied it and its
+  // cleanup never ran. The original bytes are gone, so this cannot be counted
+  // as a saved original. OutActual is left holding the patch, which is what
+  // was actually found, and the caller records that the site is unrestorable.
   //
   if (RtlCompareMemory(OutActual, kGatePatched, GATE_PATCH_LEN) ==
       GATE_PATCH_LEN) {
     DbgPrint("[LongsDriver] ObGatePatch: %s already patched from a previous "
-             "load, adopting it.\n",
+             "load, adopting it; the original bytes are gone so this site "
+             "cannot be reverted.\n",
              Label);
-    RtlCopyMemory(OutActual, kGatePatched, GATE_PATCH_LEN);
     return TRUE;
   }
 
@@ -194,6 +207,8 @@ NTSTATUS ObGatePatchApply(VOID) {
   ULONG kernelSize = 0;
   ULONGLONG preAddr;
   ULONGLONG postAddr;
+  BOOLEAN preRestorable;
+  BOOLEAN postRestorable;
   NTSTATUS status;
 
   DbgPrint("[LongsDriver] ObGatePatch: apply requested, target ntoskrnl "
@@ -240,15 +255,17 @@ NTSTATUS ObGatePatchApply(VOID) {
     return STATUS_INVALID_PARAMETER;
   }
 
-  if (!ReadAndMatch(preAddr, kPreOriginal, "PreOperation", g_PreSaved)) {
+  if (!ReadAndMatch(preAddr, kPreOriginal, "PreOperation", g_PreSaved,
+                    &preRestorable)) {
     return STATUS_REVISION_MISMATCH;
   }
-  g_PreSavedOk = TRUE;
+  g_PreSavedOk = preRestorable;
 
-  if (!ReadAndMatch(postAddr, kPostOriginal, "PostOperation", g_PostSaved)) {
+  if (!ReadAndMatch(postAddr, kPostOriginal, "PostOperation", g_PostSaved,
+                    &postRestorable)) {
     return STATUS_REVISION_MISMATCH;
   }
-  g_PostSavedOk = TRUE;
+  g_PostSavedOk = postRestorable;
 
   //
   // All-or-nothing: if the second write fails, put the first one back so we
@@ -258,7 +275,9 @@ NTSTATUS ObGatePatchApply(VOID) {
   if (!NT_SUCCESS(status)) {
     DbgPrint("[LongsDriver] ObGatePatch: PreOperation write failed 0x%X.\n",
              status);
-    (VOID)WriteBytes(preAddr, g_PreSaved);
+    if (g_PreSavedOk) {
+      (VOID)WriteBytes(preAddr, g_PreSaved);
+    }
     return status;
   }
 
@@ -267,8 +286,12 @@ NTSTATUS ObGatePatchApply(VOID) {
     DbgPrint("[LongsDriver] ObGatePatch: PostOperation write failed 0x%X, "
              "rolling back.\n",
              status);
-    (VOID)WriteBytes(postAddr, g_PostSaved);
-    (VOID)WriteBytes(preAddr, g_PreSaved);
+    if (g_PostSavedOk) {
+      (VOID)WriteBytes(postAddr, g_PostSaved);
+    }
+    if (g_PreSavedOk) {
+      (VOID)WriteBytes(preAddr, g_PreSaved);
+    }
     return status;
   }
 
@@ -282,6 +305,8 @@ NTSTATUS ObGatePatchApply(VOID) {
 VOID ObGatePatchRevert(VOID) {
   PVOID kernelBase = NULL;
   ULONG kernelSize = 0;
+
+  g_RestoredAny = FALSE;
 
   if (!g_Applied) {
     return;
@@ -303,15 +328,29 @@ VOID ObGatePatchRevert(VOID) {
   if (g_PostSavedOk) {
     (VOID)WriteBytes((ULONGLONG)kernelBase + OB_CALLBACKS_POST_RVA, g_PostSaved);
     g_PostSavedOk = FALSE;
+    g_RestoredAny = TRUE;
   }
   if (g_PreSavedOk) {
     (VOID)WriteBytes((ULONGLONG)kernelBase + OB_CALLBACKS_PRE_RVA, g_PreSaved);
     g_PreSavedOk = FALSE;
+    g_RestoredAny = TRUE;
   }
 
   g_Applied = FALSE;
-  DbgPrint("[LongsDriver] ObGatePatch: original ObRegisterCallbacks bytes "
-           "restored.\n");
+
+  //
+  // Only claim a restore when something was actually written back. A site that
+  // was adopted from a previous load has no original, so a silent "restored"
+  // here would hide a kernel left permanently patched.
+  //
+  if (g_RestoredAny) {
+    DbgPrint("[LongsDriver] ObGatePatch: original ObRegisterCallbacks bytes "
+             "restored.\n");
+  } else {
+    DbgPrint("[LongsDriver] ObGatePatch: revert ran but no original bytes were"
+             " ever saved (patch adopted from a previous load); ntoskrnl stays"
+             " patched until reboot.\n");
+  }
 }
 
 BOOLEAN ObGatePatchIsApplied(VOID) { return g_Applied; }

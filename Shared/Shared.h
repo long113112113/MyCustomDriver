@@ -158,6 +158,14 @@ typedef struct _PROTECT_STATUS_RESPONSE {
   NTSTATUS GatePatchStatus;
   // 1 while the patched bytes are installed in ntoskrnl, 0 otherwise.
   ULONG GatePatchApplied;
+  // Pre-operation callback traffic. Total counts every invocation; Hits counts
+  // those whose object was a protected PID; Stripped counts those where access
+  // rights were actually reduced. A Total that grows while Protected stays 0
+  // means the callback is live but the consumer is reusing a handle it opened
+  // before the PID was protected, which stripping cannot revoke.
+  ULONG PreOpTotal;
+  ULONG PreOpProtectedHits;
+  ULONG PreOpStripped;
 } PROTECT_STATUS_RESPONSE, *PPROTECT_STATUS_RESPONSE;
 
 //

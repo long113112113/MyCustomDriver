@@ -468,7 +468,7 @@ static void RunProtectedList(HANDLE h) {
       std::cout << "  Callback: DISARMED\n";
       std::cout << "    InitStatus = 0x" << std::hex << st.InitStatus
                 << std::dec;
-      if (st.InitStatus == (NTSTATUS)0xC00400A0)
+      if (st.InitStatus == (NTSTATUS)0xC0000182)
         std::cout << " STATUS_DEVICE_CONFIGURATION_ERROR"
                      " -> PatchGuard bypass inactive (safe mode)";
       else if (st.InitStatus == (NTSTATUS)0xC0000022)
@@ -489,20 +489,27 @@ static void RunProtectedList(HANDLE h) {
                 << std::dec << " ";
       if (st.GatePatchApplied) {
         std::cout << "(patched, gate relaxed - refusal came from elsewhere)\n";
-      } else if (st.GatePatchStatus == (NTSTATUS)0xC00002FD) {
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC0000059) {
         std::cout << "STATUS_REVISION_MISMATCH"
                   << " -> ntoskrnl bytes differ from the recorded signature,"
                      " patch refused; see DbgPrint for actual bytes\n";
-      } else if (st.GatePatchStatus == (NTSTATUS)0xC00400A0) {
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC0000182) {
         std::cout << "STATUS_DEVICE_CONFIGURATION_ERROR"
-                  << " -> patch declined on purpose (PatchGuard inactive,"
-                     " or memory integrity enforced)\n";
-      } else if (st.GatePatchStatus == (NTSTATUS)0xC000000D) {
+                  << " -> patch declined on purpose (PatchGuard inactive)\n";
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC0000225) {
         std::cout << "STATUS_NOT_FOUND"
                   << " -> ntoskrnl image base could not be resolved\n";
-      } else if (st.GatePatchStatus == (NTSTATUS)0xC00000BB) {
-        std::cout << "STATUS_NOT_SUPPORTED"
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC0000184) {
+        std::cout << "STATUS_INVALID_DEVICE_STATE"
                   << " -> not at PASSIVE_LEVEL when the patch was attempted\n";
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC000000D) {
+        std::cout << "STATUS_INVALID_PARAMETER"
+                  << " -> target RVA lies outside the ntoskrnl image, so the"
+                     " recorded signature is stale for this build\n";
+      } else if (st.GatePatchStatus == (NTSTATUS)0xC0000005) {
+        std::cout << "STATUS_ACCESS_VIOLATION"
+                  << " -> write to ntoskrnl faulted, memory integrity is"
+                     " enforcing\n";
       } else if (st.GatePatchStatus == (NTSTATUS)0xFFFFFFFF) {
         std::cout << "(apply never reached - PatchGuard bypass was inactive,"
                    " so registration was never attempted)\n";
@@ -521,7 +528,19 @@ static void RunProtectedList(HANDLE h) {
   PROTECTED_PROCESS_LIST_RESPONSE resp = {0};
   if (DeviceIoControl(h, IOCTL_LIST_PROTECTED_PROCESSES, NULL, 0, &resp,
                       sizeof(resp), &ret, NULL)) {
-    std::cout << "  Protected: " << resp.Count;
+      //
+      // Separates "callback never ran" from "ran but the handle predates
+      // protection" from "ran and stripped, yet the kill still worked".
+      //
+      std::cout << "  PreOp: total " << st.PreOpTotal << ", protected-hit "
+                << st.PreOpProtectedHits << ", stripped "
+                << st.PreOpStripped;
+      if (st.PreOpTotal > 0 && st.PreOpProtectedHits == 0)
+        std::cout << "  <- callback live but never saw a protected PID:"
+                     " consumers reuse handles opened before protection";
+      std::cout << "\n";
+
+      std::cout << "  Protected: " << resp.Count;
     for (ULONG i = 0; i < resp.Count; i++)
       std::cout << " " << resp.ProcessIds[i];
     std::cout << "\n";

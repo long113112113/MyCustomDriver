@@ -113,13 +113,27 @@ static BOOLEAN RemoveProtectedProcess(ULONG ProcessId) {
 //
 // Pre-operation callback: strips destructive access rights on handle create/duplicate
 //
+// This only ever sees operations that CREATE or DUPLICATE a handle. A handle
+// obtained before the PID entered the protected list is never revisited, so
+// this cannot revoke access on a process a consumer already holds a handle to
+// (Task Manager is the obvious case: it opens handles at startup to render its
+// list, then terminates using the handle it already had). The counters below
+// exist to separate "callback never fired" from "fired and stripped".
+//
+static volatile LONG g_PreOpTotal = 0;
+static volatile LONG g_PreOpProtectedHits = 0;
+static volatile LONG g_PreOpStripped = 0;
+
 static OB_PREOP_CALLBACK_STATUS OnPreOpenProcess(
     _Inout_ PVOID RegistrationContext,
     _Inout_ POB_PRE_OPERATION_INFORMATION Info) {
   UNREFERENCED_PARAMETER(RegistrationContext);
 
   PACCESS_MASK desiredAccess;
+  ACCESS_MASK originalAccess;
   ULONG processId;
+
+  InterlockedIncrement(&g_PreOpTotal);
 
   // Ignore kernel-mode requests and invalid objects
   if (Info->KernelHandle || !Info->Object)
@@ -129,10 +143,26 @@ static OB_PREOP_CALLBACK_STATUS OnPreOpenProcess(
   if (!IsProcessProtected(processId))
     return OB_PREOP_SUCCESS;
 
-  desiredAccess = &Info->Parameters->CreateHandleInformation.DesiredAccess;
+  InterlockedIncrement(&g_PreOpProtectedHits);
+
+  if (Info->Operation == OB_OPERATION_HANDLE_CREATE) {
+    desiredAccess = &Info->Parameters->CreateHandleInformation.DesiredAccess;
+  } else {
+    desiredAccess = &Info->Parameters->DuplicateHandleInformation.DesiredAccess;
+  }
+
+  originalAccess = *desiredAccess;
 
   // Strip denied access rights while preserving query permissions
   *desiredAccess &= ~PROTECT_DENIED_ACCESS;
+
+  if (originalAccess != *desiredAccess) {
+    InterlockedIncrement(&g_PreOpStripped);
+    DbgPrint("[LongsDriver] ProcessProtect: op %lu on protected pid %lu,"
+             " access 0x%X -> 0x%X.\n",
+             (ULONG)Info->Operation, processId, originalAccess,
+             *desiredAccess);
+  }
 
   return OB_PREOP_SUCCESS;
 }
@@ -254,6 +284,9 @@ NTSTATUS ProcessProtectQueryStatus(PPROTECT_STATUS_RESPONSE Response) {
   Response->CallbackActive = (ULONG)(g_ObCallbackHandle != NULL);
   Response->GatePatchStatus = g_GatePatchStatus;
   Response->GatePatchApplied = (ULONG)ObGatePatchIsApplied();
+  Response->PreOpTotal = (ULONG)g_PreOpTotal;
+  Response->PreOpProtectedHits = (ULONG)g_PreOpProtectedHits;
+  Response->PreOpStripped = (ULONG)g_PreOpStripped;
 
   ExAcquireFastMutex(&g_ProtectedListLock);
   Response->Count = g_ProtectedProcessCount;
