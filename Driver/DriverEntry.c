@@ -3,14 +3,16 @@
 #include "Dispatch.h"
 #include "ProcessModule.h"
 #include "ProcessProtect.h"
-#include "ThreadModule.h"
 #include "TaskPersistence.h"
+#include "ThreadModule.h"
 #include <ntddk.h>
 
 #define DEVICE_NAME L"\\Device\\LongsDriver"
 #define SYMLINK_NAME L"\\DosDevices\\LongsDriver"
 
 PDEVICE_OBJECT g_DeviceObject = NULL;
+
+static PDRIVER_OBJECT g_MappedDriverObject = NULL;
 
 //
 // IoCreateDriver is not declared in WDK headers; resolve it at runtime It is
@@ -37,6 +39,8 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
   UNICODE_STRING deviceName, symlinkName;
 
   DbgPrint("[LongsDriver] MappedDeviceInit start\n");
+
+  g_MappedDriverObject = DriverObject;
 
   // Init unload
   DriverObject->DriverUnload = DriverUnload;
@@ -202,6 +206,11 @@ NTSTATUS DmEntry(_In_opt_ PDRIVER_OBJECT DriverObject,
   if (!NT_SUCCESS(status)) {
     DbgPrint("[LongsDriver] DmEntry: IoCreateDriver failed: 0x%X\n", status);
     return status;
+  }
+
+  if (g_MappedDriverObject != NULL) {
+    g_MappedDriverObject->DriverUnload = NULL;
+    DbgPrint("[LongsDriver] DmEntry: DriverUnload cleared\n");
   }
 
   return STATUS_SUCCESS;
