@@ -95,8 +95,10 @@ NTSTATUS ProcessModuleInitialize(VOID) {
   g_HiddenProcessCount = 0;
 
   status = OffsetsInitialize();
-  if (!NT_SUCCESS(status))
+  if (!NT_SUCCESS(status)) {
     DbgPrint("Failed to query OS build: 0x%X\n", status);
+    return status;
+  }
 
   DbgPrint("ProcessModule initialized.\n");
   return STATUS_SUCCESS;
