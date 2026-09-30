@@ -35,6 +35,12 @@ static ULONG g_ProtectedProcessCount = 0;
 static FAST_MUTEX g_ProtectedListLock;
 static PVOID g_ObCallbackHandle = NULL;
 //
+// Whether the process-exit notification below is registered.
+// PsSetCreateProcessNotifyRoutine hands back no handle, so this flag is what
+// tells cleanup whether there is a registration to remove.
+//
+static BOOLEAN g_ProcessNotifyRegistered = FALSE;
+//
 // Sentinel for "ObGatePatchApply was never reached", so a status query issued
 // before initialization is distinguishable from a real failure. Not a
 // documented NTSTATUS: it is reported as-is and the client prints it verbatim.
@@ -111,6 +117,42 @@ static BOOLEAN RemoveProtectedProcess(ULONG ProcessId) {
 }
 
 //
+// Reaps a protected PID out of the list when its process exits.
+//
+// Without this the list only ever grows. Windows recycles PIDs, so a stale
+// entry does not merely waste a slot - it silently applies the access-right
+// strip to whatever unrelated process later inherits that PID. After
+// MAX_PROTECTED_PROCESSES create/exit cycles the list is also permanently full
+// and every further protect request fails with STATUS_INSUFFICIENT_RESOURCES.
+//
+static VOID OnProcessNotify(HANDLE ParentId, HANDLE ProcessId, BOOLEAN Create) {
+  ULONG processId;
+
+  UNREFERENCED_PARAMETER(ParentId);
+
+  //
+  // ProcessId carries the PID of the subject process in both directions: on
+  // create it is the new process, on exit it is the process that just died.
+  // ParentId is only meaningful on create. Only the exit case concerns the
+  // protected list.
+  //
+  if (Create) {
+    return;
+  }
+
+  processId = HandleToULong(ProcessId);
+  if (!IsValidProcessId(processId)) {
+    return;
+  }
+
+  if (RemoveProtectedProcess(processId)) {
+    DbgPrint("[LongsDriver] ProcessProtect: pid %lu exited, dropped from "
+             "protected list.\n",
+             processId);
+  }
+}
+
+//
 // Pre-operation callback: strips destructive access rights on handle create/duplicate
 //
 // This only ever sees operations that CREATE or DUPLICATE a handle. A handle
@@ -180,7 +222,27 @@ NTSTATUS ProcessProtectInitialize(VOID) {
   ExInitializeFastMutex(&g_ProtectedListLock);
   g_ProtectedProcessCount = 0;
   g_ObCallbackHandle = NULL;
+  g_ProcessNotifyRegistered = FALSE;
   g_InitStatus = STATUS_UNSUCCESSFUL;
+
+  //
+  // Keep the protected list correct across process exits. Registered ahead of
+  // the PatchGuard gate below because the list belongs to the module, not to
+  // the Ob callback, and PsSetCreateProcessNotifyRoutine is an ordinary export
+  // rather than a PatchGuard trigger.
+  //
+  // Best-effort: losing this only means a protected PID is not reaped when its
+  // process dies, so the Ob callback path below still works and the existing
+  // status reporting still describes why protection is or is not live.
+  //
+  status = PsSetCreateProcessNotifyRoutine(OnProcessNotify, FALSE);
+  if (NT_SUCCESS(status)) {
+    g_ProcessNotifyRegistered = TRUE;
+  } else {
+    DbgPrint("[LongsDriver] ProcessProtect: exit notification failed 0x%X; "
+             "protected PIDs will not be reaped on process exit.\n",
+             status);
+  }
 
   if (!g_PatchGuardBypassed) {
     g_InitStatus = STATUS_DEVICE_CONFIGURATION_ERROR;
@@ -246,6 +308,19 @@ NTSTATUS ProcessProtectInitialize(VOID) {
 
 VOID ProcessProtectCleanup(VOID) {
   ULONG i;
+
+  //
+  // Unregister the exit notification before anything else. Passing TRUE makes
+  // this call block until every in-flight callback has returned, so from here
+  // on no notification can touch the protected list while it is being torn
+  // down below.
+  //
+  if (g_ProcessNotifyRegistered) {
+    PsSetCreateProcessNotifyRoutine(OnProcessNotify, TRUE);
+    g_ProcessNotifyRegistered = FALSE;
+    DbgPrint("[LongsDriver] ProcessProtect: exit notification "
+             "unregistered.\n");
+  }
 
   if (g_ObCallbackHandle) {
     ObUnRegisterCallbacks(g_ObCallbackHandle);

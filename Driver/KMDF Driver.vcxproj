@@ -195,9 +195,6 @@
     <ClInclude Include="Kurasagi\Util\Memory.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="KMDFDriver.inf" />
-  </ItemGroup>
-  <ItemGroup>
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
