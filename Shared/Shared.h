@@ -80,7 +80,34 @@ typedef LONG NTSTATUS;
 #define IOCTL_RETIRED_PROBE_CALLBACK_MODULES 0x90C
 
 //
-// Codes 0x90D upward are free. Allocate the next new operation from 0x90D to
+// Elevate / unelevate / query the calling client thread's token. All three
+// take no input and answer ELEVATE_STATUS_RESPONSE.
+//
+// The target is always the thread that issued the call - there is no PID
+// parameter anywhere in this group, so the driver cannot be pointed at another
+// process.
+//
+#define IOCTL_ELEVATE_SELF                                                       \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x90D, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_UNELEVATE_SELF                                                     \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x90E, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_QUERY_ELEVATION                                                    \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x90F, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+//
+// Disable / restore / query the Microsoft-Windows-Threat-Intelligence (ETW-TI)
+// provider. DISABLE and ENABLE take no input; STATUS answers
+// ETWTI_STATUS_RESPONSE.
+//
+#define IOCTL_ETWTI_DISABLE                                                      \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x910, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_ETWTI_ENABLE                                                       \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x911, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_ETWTI_STATUS                                                       \
+  CTL_CODE(DRIVER_DEVICE_TYPE, 0x912, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+//
+// Codes 0x913 upward are free. Allocate the next new operation from 0x913 to
 // keep the driver's dispatch table contiguous.
 //
 
@@ -167,6 +194,55 @@ typedef struct _PROTECT_STATUS_RESPONSE {
   ULONG PreOpProtectedHits;
   ULONG PreOpStripped;
 } PROTECT_STATUS_RESPONSE, *PPROTECT_STATUS_RESPONSE;
+
+// Output of IOCTL_ELEVATE_SELF / IOCTL_UNELEVATE_SELF / IOCTL_QUERY_ELEVATION.
+typedef struct _ELEVATE_STATUS_RESPONSE {
+  // STATUS_SUCCESS once the requested state change has been applied, otherwise
+  // the reason it was refused.
+  NTSTATUS Status;
+  // 1 when the calling thread carries an impersonation token, 0 when it does
+  // not. Reported after the operation, so the client can confirm the result
+  // rather than infer it from the absence of an error.
+  ULONG Elevated;
+  // TID of the thread the IOCTL was dispatched on, i.e. the thread these three
+  // fields describe. Echoed so a client that spawns threads can tell which one
+  // ended up elevated.
+  ULONG ThreadId;
+} ELEVATE_STATUS_RESPONSE, *PELEVATE_STATUS_RESPONSE;
+
+//
+// Output of IOCTL_ETWTI_DISABLE / IOCTL_ETWTI_ENABLE / IOCTL_ETWTI_STATUS.
+//
+// The resolved chain is reported verbatim so a failed run can be diagnosed from
+// a debugger dump without re-running the resolution. Addresses are reported as
+// raw virtual addresses of the running kernel, not as offsets, because the
+// object they point at lives in a pool allocation whose address moves with the
+// boot.
+//
+typedef struct _ETWTI_STATUS_RESPONSE {
+  // STATUS_SUCCESS when the requested operation completed. On DISABLE and ENABLE
+  // this is the module's result; on STATUS it is the resolution result, so a
+  // failure there means the chain could not be walked at all rather than that
+  // the provider is enabled.
+  NTSTATUS Status;
+  // 1 while this module holds ETW-TI disabled, 0 otherwise.
+  ULONG Disabled;
+  // Value of IsEnabled captured by the last successful DISABLE, i.e. the value
+  // ENABLE puts back.
+  ULONG SavedValue;
+  // Live IsEnabled value. Read-only for STATUS.
+  ULONG CurrentValue;
+  // Address of the global that EtwRegister fills with the provider handle.
+  ULONGLONG SlotAddress;
+  // Address of the ETW_REGISTRY_ENTRY that handle refers to.
+  ULONGLONG EntryAddress;
+  // Address of the enable record; IsEnabled is CurrentValue's location.
+  ULONGLONG EnableInfoAddress;
+  // Number of times the auto-apply worker has tried since driver load. A counter
+  // that keeps climbing means the provider had not registered yet; a counter
+  // frozen below the last successful Disable means the worker thread is gone.
+  ULONG ArmAttempts;
+} ETWTI_STATUS_RESPONSE, *PETWTI_STATUS_RESPONSE;
 
 //
 // The CALLBACK_MODULE_HIT / CALLBACK_MODULE_PROBE_RESPONSE structures that

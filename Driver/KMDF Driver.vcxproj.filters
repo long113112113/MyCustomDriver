@@ -37,9 +37,15 @@
     <ClCompile Include="TaskPersistence.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="SelfElevate.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Device.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SelfElevate.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Dispatch.h">

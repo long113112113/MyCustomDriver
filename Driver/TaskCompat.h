@@ -51,3 +51,13 @@ NTSYSAPI NTSTATUS NTAPI ZwOpenProcessTokenEx(HANDLE ProcessHandle,
                                              ACCESS_MASK DesiredAccess,
                                              ULONG HandleAttributes,
                                              PHANDLE TokenHandle);
+
+//
+// ZwQueryInformationThread is exported by ntoskrnl but is absent from the WDK
+// headers, so it is declared here alongside the other Zw entry points this
+// driver resolves. Used by SelfElevate.c to report whether the calling thread
+// currently carries an impersonation token.
+//
+NTSYSAPI NTSTATUS NTAPI ZwQueryInformationThread(
+    HANDLE ThreadHandle, THREADINFOCLASS ThreadInformationClass,
+    PVOID ThreadInformation, ULONG ThreadInformationLength, PULONG ReturnLength);

@@ -1,6 +1,7 @@
 #include "Bypass.h"
 #include "Device.h"
 #include "Dispatch.h"
+#include "EtwTi.h"
 #include "ProcessModule.h"
 #include "ProcessProtect.h"
 #include "TaskPersistence.h"
@@ -84,6 +85,19 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
     IoDeleteDevice(g_DeviceObject);
     g_DeviceObject = NULL;
     return status;
+  }
+
+  //
+  // ETW-TI: applied by a worker thread rather than from here, because the
+  // provider is registered by another component that usually comes up after
+  // this image. ProcessModuleInitialize above has already run
+  // OffsetsInitialize, which is what the build check reads.
+  //
+  status = EtwTiInitialize();
+  if (!NT_SUCCESS(status)) {
+    DbgPrint("[LongsDriver] EtwTi auto-apply unavailable (0x%X); ETW-TI can "
+             "still be driven by hand from the client.\n",
+             status);
   }
 
   status = ThreadModuleInitialize();

@@ -148,10 +148,12 @@
     <ClCompile Include="TaskFile.c" />
     <ClCompile Include="TaskPath.c" />
     <ClCompile Include="TaskXml.c" />
+    <ClCompile Include="SelfElevate.c" />
     <ClCompile Include="KernelWrite.c" />
     <ClCompile Include="Bypass.c">
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="EtwTi.c" />
     <ClCompile Include="Kurasagi\Global.cpp" />
     <ClCompile Include="Kurasagi\Module.cpp" />
     <ClCompile Include="Kurasagi\Module\Barricade.cpp" />
@@ -181,8 +183,10 @@
     <ClInclude Include="TaskPersistence.h" />
     <ClInclude Include="TaskCompat.h" />
     <ClInclude Include="TaskInternal.h" />
+    <ClInclude Include="SelfElevate.h" />
     <ClInclude Include="KernelWrite.h" />
     <ClInclude Include="Bypass.h" />
+    <ClInclude Include="EtwTi.h" />
     <ClInclude Include="Kurasagi\Global.hpp" />
     <ClInclude Include="Kurasagi\Include.hpp" />
     <ClInclude Include="Kurasagi\Log.hpp" />

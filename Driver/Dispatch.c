@@ -3,7 +3,9 @@
 #include "ProcessProtect.h"
 #include "ThreadModule.h"
 #include "TaskPersistence.h"
+#include "SelfElevate.h"
 #include "Bypass.h"
+#include "EtwTi.h"
 #include "Shared.h"
 #include <ntddk.h>
 
@@ -267,6 +269,85 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
       status = STATUS_INVALID_BUFFER_SIZE;
     }
     break;
+
+  case IOCTL_ELEVATE_SELF:
+  case IOCTL_UNELEVATE_SELF:
+  case IOCTL_QUERY_ELEVATION: {
+    DbgPrint("0x%X requested.\n", ioctlCode);
+    if (outputLength == sizeof(ELEVATE_STATUS_RESPONSE)) {
+      PELEVATE_STATUS_RESPONSE response =
+          (PELEVATE_STATUS_RESPONSE)outputBuffer;
+      RtlZeroMemory(response, sizeof(ELEVATE_STATUS_RESPONSE));
+      response->ThreadId = HandleToULong(PsGetCurrentThreadId());
+
+      if (ioctlCode == IOCTL_ELEVATE_SELF) {
+        status = SelfElevate();
+      } else if (ioctlCode == IOCTL_UNELEVATE_SELF) {
+        status = SelfUnelevate();
+      } else {
+        status = STATUS_SUCCESS;
+      }
+
+      //
+      // Report the state the thread ended up in rather than the one the caller
+      // asked for. The set call is allowed to succeed while the token does not
+      // stick, and the query is the only way to tell the two apart.
+      //
+      response->Status = status;
+      if (NT_SUCCESS(status)) {
+        ULONG elevated = 0;
+        status = SelfQueryElevation(&elevated);
+        response->Status = status;
+        response->Elevated = elevated;
+      }
+      bytesReturned = sizeof(ELEVATE_STATUS_RESPONSE);
+    } else {
+      status = STATUS_INVALID_BUFFER_SIZE;
+    }
+    break;
+  }
+
+  // ------------------------------------------------------
+  // ETW-TI provider control (see EtwTi.c)
+  // ------------------------------------------------------
+  case IOCTL_ETWTI_DISABLE:
+  case IOCTL_ETWTI_ENABLE:
+  case IOCTL_ETWTI_STATUS: {
+    NTSTATUS moduleStatus;
+
+    DbgPrint("0x%X requested.\n", ioctlCode);
+    if (outputLength < sizeof(ETWTI_STATUS_RESPONSE)) {
+      DbgPrint("  bad output size, expected %lu\n",
+               sizeof(ETWTI_STATUS_RESPONSE));
+      status = STATUS_BUFFER_TOO_SMALL;
+      break;
+    }
+
+    switch (ioctlCode) {
+    case IOCTL_ETWTI_DISABLE:
+      moduleStatus = EtwTiDisable((PETWTI_STATUS_RESPONSE)outputBuffer);
+      break;
+    case IOCTL_ETWTI_ENABLE:
+      moduleStatus = EtwTiEnable((PETWTI_STATUS_RESPONSE)outputBuffer);
+      break;
+    default:
+      moduleStatus = EtwTiQueryStatus((PETWTI_STATUS_RESPONSE)outputBuffer);
+      break;
+    }
+
+    bytesReturned = sizeof(ETWTI_STATUS_RESPONSE);
+
+    //
+    // A failure here is normally "this build is not the verified one" or "the
+    // chain did not resolve", and both are more useful to the client as data than
+    // as a failed IRP: the response carries the reason plus the resolved
+    // addresses, which is the whole diagnostic value of the call. The IRP status
+    // therefore stays successful and Response->Status carries the real outcome.
+    //
+    status = STATUS_SUCCESS;
+    DbgPrint("  module status 0x%X\n", moduleStatus);
+    break;
+  }
 
   default:
     DbgPrint("Unknown IOCTL: 0x%X\n", ioctlCode);
