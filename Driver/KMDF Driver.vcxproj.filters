@@ -31,6 +31,24 @@
     <ClCompile Include="ProcessModule.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ProcessLookup.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RemoteInject.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="PeImage.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ApcInject.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="NetProbeInject.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="NetProbeImage.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="ThreadModule.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -55,6 +73,24 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ProcessModule.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ProcessLookup.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RemoteInject.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PeImage.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ApcInject.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="NetProbeInject.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="NetProbeImage.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ThreadModule.h">

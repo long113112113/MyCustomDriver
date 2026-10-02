@@ -4,6 +4,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 VisualStudioVersion = 17.14.37614.0 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Driver", "Driver\KMDF Driver.vcxproj", "{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}"
+	ProjectSection(ProjectDependencies) = postProject
+		{5D3A7C18-9E64-4B27-A0F1-63C8E2B94D7A} = {5D3A7C18-9E64-4B27-A0F1-63C8E2B94D7A}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Client", "Client\Client.vcxproj", "{168F2841-DF72-4F22-8FB3-4553609B2949}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -22,10 +25,10 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NetProbeLoader", "NetProbeL
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|ARM64 = Debug|ARM64
-		Debug|x64 = Debug|x64
-		Release|ARM64 = Release|ARM64
 		Release|x64 = Release|x64
+		Release|ARM64 = Release|ARM64
+		Debug|x64 = Debug|x64
+		Debug|ARM64 = Debug|ARM64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}.Debug|ARM64.ActiveCfg = Debug|ARM64

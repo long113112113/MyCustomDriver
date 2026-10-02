@@ -2,7 +2,7 @@
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
-      <Configuration>Debug</Configuration>
+      <Configuration>Release</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
     <ProjectConfiguration Include="Release|x64">
@@ -119,6 +119,16 @@
     <ClCompile Include="src\ProbeNet.c" />
     <ClCompile Include="src\ProbeWinsock.c" />
     <ClCompile Include="src\ProbeWorker.c" />
+    <!--
+      Runs from the raw file image before its own imports are bound, so it is
+      built without stack cookies, without link-time code generation (which
+      could introduce CRT calls), and without optimization (so the copy loops
+      are not folded into a memcpy that reads an uninitialized isa global).
+    -->
+    <ClCompile Include="src\ReflectiveLoader.c">
+      <AdditionalOptions>/GS- /GL- /guard- %(AdditionalOptions)</AdditionalOptions>
+      <Optimization>Disabled</Optimization>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\NetProbe.h" />

