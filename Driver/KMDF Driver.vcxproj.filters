@@ -40,9 +40,6 @@
     <ClCompile Include="SelfElevate.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="WskClient.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Device.h">
@@ -64,9 +61,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="TaskPersistence.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="WskClient.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

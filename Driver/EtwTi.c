@@ -606,7 +606,6 @@ static VOID EtwTiAutoThread(PVOID Context) {
 //
 NTSTATUS EtwTiInitialize(VOID) {
   OBJECT_ATTRIBUTES attributes;
-  UNICODE_STRING threadName;
   HANDLE thread = NULL;
   NTSTATUS status;
 
@@ -615,10 +614,9 @@ NTSTATUS EtwTiInitialize(VOID) {
 
   g_AutoStarted = TRUE;
 
-  RtlInitUnicodeString(&threadName, L"\\LongsEtwTi");
-  InitializeObjectAttributes(&attributes, &threadName,
-                             OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, NULL,
-                             NULL);
+  // No ObjectName: PsCreateSystemThread rejects a named thread with
+  // STATUS_OBJECT_NAME_INVALID on this build.
+  InitializeObjectAttributes(&attributes, NULL, OBJ_KERNEL_HANDLE, NULL, NULL);
 
   status = PsCreateSystemThread(&thread, 0, &attributes, NULL, NULL,
                                EtwTiAutoThread, NULL);
