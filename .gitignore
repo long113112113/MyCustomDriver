@@ -14,3 +14,4 @@ Client/embed-driver.ps1
 .vscode/tasks.json
 Client/loader/LongsDriverBlob.bin
 !sentinel.md
+/HostListener

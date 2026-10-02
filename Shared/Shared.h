@@ -34,9 +34,7 @@ typedef LONG NTSTATUS;
 //
 #define IOCTL_GET_PG_STATUS                                                    \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
-//
-// Sus zone
-//
+
 // Process DKOM (hide / reveal / list hidden)
 #define IOCTL_HIDE_PROCESS                                                     \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x900, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -71,15 +69,6 @@ typedef LONG NTSTATUS;
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x90B, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 //
-// Code 0x90C is retired: it was IOCTL_PROBE_CALLBACK_MODULES, the callback
-// module scanner. That direction produced no usable gadget and the gate is now
-// relaxed directly in ObRegisterCallbacks, so the operation and its response
-// structure were removed. The slot stays reserved rather than being reused, so
-// a stale client cannot accidentally reach a different handler.
-//
-#define IOCTL_RETIRED_PROBE_CALLBACK_MODULES 0x90C
-
-//
 // Elevate / unelevate / query the calling client thread's token. All three
 // take no input and answer ELEVATE_STATUS_RESPONSE.
 //
@@ -87,11 +76,11 @@ typedef LONG NTSTATUS;
 // parameter anywhere in this group, so the driver cannot be pointed at another
 // process.
 //
-#define IOCTL_ELEVATE_SELF                                                       \
+#define IOCTL_ELEVATE_SELF                                                     \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x90D, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_UNELEVATE_SELF                                                     \
+#define IOCTL_UNELEVATE_SELF                                                   \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x90E, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_QUERY_ELEVATION                                                    \
+#define IOCTL_QUERY_ELEVATION                                                  \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x90F, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 //
@@ -99,11 +88,11 @@ typedef LONG NTSTATUS;
 // provider. DISABLE and ENABLE take no input; STATUS answers
 // ETWTI_STATUS_RESPONSE.
 //
-#define IOCTL_ETWTI_DISABLE                                                      \
+#define IOCTL_ETWTI_DISABLE                                                    \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x910, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_ETWTI_ENABLE                                                       \
+#define IOCTL_ETWTI_ENABLE                                                     \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x911, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_ETWTI_STATUS                                                       \
+#define IOCTL_ETWTI_STATUS                                                     \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x912, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 //
@@ -164,8 +153,7 @@ typedef struct _THREAD_LIST_RESPONSE {
 typedef struct _PROTECTED_PROCESS_LIST_RESPONSE {
   ULONG Count;
   ULONG ProcessIds[MAX_PROTECTED_PROCESSES];
-} PROTECTED_PROCESS_LIST_RESPONSE,
-    *PPROTECTED_PROCESS_LIST_RESPONSE;
+} PROTECTED_PROCESS_LIST_RESPONSE, *PPROTECTED_PROCESS_LIST_RESPONSE;
 
 // Output of IOCTL_GET_PROTECT_STATUS.
 typedef struct _PROTECT_STATUS_RESPONSE {
@@ -220,10 +208,10 @@ typedef struct _ELEVATE_STATUS_RESPONSE {
 // boot.
 //
 typedef struct _ETWTI_STATUS_RESPONSE {
-  // STATUS_SUCCESS when the requested operation completed. On DISABLE and ENABLE
-  // this is the module's result; on STATUS it is the resolution result, so a
-  // failure there means the chain could not be walked at all rather than that
-  // the provider is enabled.
+  // STATUS_SUCCESS when the requested operation completed. On DISABLE and
+  // ENABLE this is the module's result; on STATUS it is the resolution result,
+  // so a failure there means the chain could not be walked at all rather than
+  // that the provider is enabled.
   NTSTATUS Status;
   // 1 while this module holds ETW-TI disabled, 0 otherwise.
   ULONG Disabled;
@@ -238,15 +226,18 @@ typedef struct _ETWTI_STATUS_RESPONSE {
   ULONGLONG EntryAddress;
   // Address of the enable record; IsEnabled is CurrentValue's location.
   ULONGLONG EnableInfoAddress;
-  // Number of times the auto-apply worker has tried since driver load. A counter
-  // that keeps climbing means the provider had not registered yet; a counter
-  // frozen below the last successful Disable means the worker thread is gone.
+  // Number of times the auto-apply worker has tried since driver load. A
+  // counter that keeps climbing means the provider had not registered yet; a
+  // counter frozen below the last successful Disable means the worker thread is
+  // gone.
   ULONG ArmAttempts;
 } ETWTI_STATUS_RESPONSE, *PETWTI_STATUS_RESPONSE;
 
-//
-// The CALLBACK_MODULE_HIT / CALLBACK_MODULE_PROBE_RESPONSE structures that
-// accompanied IOCTL_PROBE_CALLBACK_MODULES were removed together with it.
+// The WSK_STATUS_RESPONSE / WSK_PROBE_RESPONSE structures that accompanied
+// IOCTL_WSK_STATUS / IOCTL_WSK_PROBE were removed with those IOCTLs. The WSK
+// probe now runs on a timer inside the driver and logs to DbgPrint, so nothing
+// needed a client-facing contract; the probe result is a private type in
+// WskClient.c.
 //
 
 // default response

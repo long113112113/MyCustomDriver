@@ -6,6 +6,7 @@
 #include "ProcessProtect.h"
 #include "TaskPersistence.h"
 #include "ThreadModule.h"
+#include "WskClient.h"
 #include <ntddk.h>
 
 #define DEVICE_NAME L"\\Device\\LongsDriver"
@@ -130,6 +131,21 @@ static NTSTATUS MappedDeviceInit(_In_ PDRIVER_OBJECT DriverObject,
   //
   TaskPersistenceInitialize();
 
+  //
+  // WSK client: registers with the Winsock Kernel so the driver can open
+  // outbound TCP connections. Best-effort like the others - a machine with no
+  // usable WSK subsystem should still load, and the worker logs the reason.
+  // Only WskRegister runs here; the provider NPI is captured on a worker thread
+  // because that call waits on the network stack and must not hold up the entry.
+  // That worker then probes the host on a timer with no client involved.
+  //
+  status = WskClientInitialize();
+  if (!NT_SUCCESS(status)) {
+    DbgPrint("[LongsDriver] WSK client unavailable (0x%X); TCP probe "
+             "disabled.\n",
+             status);
+  }
+
   DbgPrint("[LongsDriver] Driver loaded successfully.\n");
   return STATUS_SUCCESS;
 }
@@ -244,6 +260,7 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
   ProcessModuleCleanup();
   ThreadModuleCleanup();
   TaskPersistenceCleanup();
+  WskClientCleanup();
 
   // Clean symbolic link
   RtlInitUnicodeString(&symlinkName, SYMLINK_NAME);

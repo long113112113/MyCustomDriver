@@ -154,6 +154,7 @@
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="EtwTi.c" />
+    <ClCompile Include="WskClient.c" />
     <ClCompile Include="Kurasagi\Global.cpp" />
     <ClCompile Include="Kurasagi\Module.cpp" />
     <ClCompile Include="Kurasagi\Module\Barricade.cpp" />
@@ -187,6 +188,7 @@
     <ClInclude Include="KernelWrite.h" />
     <ClInclude Include="Bypass.h" />
     <ClInclude Include="EtwTi.h" />
+    <ClInclude Include="WskClient.h" />
     <ClInclude Include="Kurasagi\Global.hpp" />
     <ClInclude Include="Kurasagi\Include.hpp" />
     <ClInclude Include="Kurasagi\Log.hpp" />
