@@ -117,8 +117,10 @@ BOOL LdrProtectSections(BYTE *base, const LdrNtHeaders *nt) {
   // copy of the file, not from here.
   //
   if (nt->OptionalHeader.SizeOfHeaders > 0) {
+    DWORD headersOldProtect = 0;
+
     if (!VirtualProtect(base, nt->OptionalHeader.SizeOfHeaders, PAGE_READONLY,
-                        &oldProtect)) {
+                        &headersOldProtect)) {
       LoaderLogLine("[loader] fail VirtualProtect on headers", 0);
       return FALSE;
     }

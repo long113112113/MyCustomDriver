@@ -14,6 +14,8 @@
 
 HMODULE g_ownModule;
 
+__declspec(dllexport) BYTE *WINAPI ReflectiveLoad(void);
+
 //
 // Locates and validates the embedded payload.
 //
@@ -33,13 +35,23 @@ static LdrNtHeaders *LdrOpenPayload(const BYTE **fileBase) {
 
   if (g_ownModule == NULL) {
     //
-    // GetModuleHandleA(NULL) rather than the linker symbol __ImageBase: that
-    // symbol is only declared under some SDK configurations, and this is
-    // exactly the handle FindResourceA needs.
+    // GetModuleHandleExA with FROM_ADDRESS, naming an address inside this loader,
+    // is the correct way to get the handle FindResourceA needs. The previous
+    // GetModuleHandleA(NULL) does not do this: with a NULL name it returns the
+    // handle of the host executable, not the DLL the resource lives in. That
+    // happened to be harmless only because DllMain assigns g_ownModule before
+    // ReflectiveLoad ever runs, so the fallback was never reached in practice -
+    // it was simply the wrong answer waiting for the first caller that arrives
+    // before DllMain, or a build where it is not.
     //
-    g_ownModule = (HMODULE)GetModuleHandleA(NULL);
-    if (g_ownModule == NULL) {
-      LoaderLogLine("[loader] fail no own module handle", 0);
+    // UNCHANGED_REFCOUNT keeps this from balancing the loader's own entry, which
+    // would undo the refcount the caller is about to drop with FreeLibrary.
+    //
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCSTR)(UINT_PTR)&ReflectiveLoad, &g_ownModule)) {
+      LoaderLogLine("[loader] fail no own module handle",
+                    (UINT64)GetLastError());
       return NULL;
     }
   }
@@ -126,20 +138,27 @@ __declspec(dllexport) BYTE *WINAPI ReflectiveLoad(void) {
   }
   LoaderLogHex("[loader] mapped at", (UINT64)(UINT_PTR)base);
 
+  //
+  // Every failure past this point unwinds through Fail. Without it each early
+  // return leaked the whole SizeOfImage reservation, which for a caller that
+  // retries in a loop is a reliable way to exhaust the address space - and it
+  // leaked an image whose imports were half bound and whose entry point had
+  // never run, so nothing else would ever reclaim it either.
+  //
   delta = (UINT64)(UINT_PTR)base - nt->OptionalHeader.ImageBase;
   if (!LdrApplyRelocations(base, nt, delta)) {
     LoaderLogHex("[loader] fail relocation stage, delta", (UINT64)(LONG)delta);
-    return NULL;
+    goto Fail;
   }
   if (!LdrResolveImports(base, nt)) {
-    return NULL;
+    goto Fail;
   }
   //
   // Protections go on last: relocations and imports both write into the image,
   // so anything made read-only first would fault the next stage.
   //
   if (!LdrProtectSections(base, nt)) {
-    return NULL;
+    goto Fail;
   }
   LdrRegisterUnwind(base, nt);
   LdrInvokeTls(base, nt, DLL_PROCESS_ATTACH);
@@ -147,15 +166,41 @@ __declspec(dllexport) BYTE *WINAPI ReflectiveLoad(void) {
   entry = (LdrDllMain)LDR_AT(base, nt->OptionalHeader.AddressOfEntryPoint);
   if (entry == NULL) {
     LoaderLogLine("[loader] fail entry point is null", 0);
-    return NULL;
+    goto Fail;
   }
+
+  //
+  // Relocations have just rewritten the immediate operands of the payload's
+  // code, so the instruction stream changed after those bytes were written.
+  // FlushInstructionCache is what tells the CPU to discard anything it had
+  // already fetched for the old bytes.
+  //
+  // Worth being precise about the reason, because the usual justification
+  // oversells it. x86-64 keeps caches coherent and has cross-modifying-code
+  // detection, so the CPU does not silently execute a mixture of old and new
+  // instructions the way it would on a looser architecture. What the API
+  // actually buys is ordering and portability: it is the documented way to
+  // publish code you have just written, and it costs one serializing instruction
+  // over a range nobody is about to re-fetch in a hot loop.
+  //
+  FlushInstructionCache(GetCurrentProcess(), base,
+                        nt->OptionalHeader.SizeOfImage);
+
   LoaderLogLine("[loader] calling payload entry point", 0);
   if (!entry((HINSTANCE)base, DLL_PROCESS_ATTACH, NULL)) {
     LoaderLogLine("[loader] fail payload entry point returned FALSE", 0);
-    return NULL;
+    goto Fail;
   }
   LoaderLogLine("[loader] payload is live", 0);
   return base;
+
+Fail:
+  //
+  // MEM_RELEASE hands the whole reservation back at once and takes care of the
+  // individual sections; the size argument is ignored for it and must be zero.
+  //
+  VirtualFree(base, 0, MEM_RELEASE);
+  return NULL;
 }
 
 __declspec(dllexport) void WINAPI ReflectiveUnload(void) {
