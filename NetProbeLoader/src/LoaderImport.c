@@ -59,12 +59,43 @@ static BOOL LdrBindModule(BYTE *base, UINT32 sizeOfImage,
   thunkRva = desc->OriginalFirstThunk != 0 ? desc->OriginalFirstThunk
                                            : desc->FirstThunk;
   iatRva = desc->FirstThunk;
-  if (thunkRva == 0 || thunkRva + sizeof(UINT64) > sizeOfImage ||
-      iatRva == 0 || iatRva + sizeof(UINT64) > sizeOfImage) {
-    LoaderLogHex("[loader] fail thunk table out of range", thunkRva);
+  if (thunkRva == 0 || thunkRva > sizeOfImage ||
+      sizeof(UINT64) > sizeOfImage - thunkRva) {
+    LoaderLogHex("[loader] fail lookup table out of range", thunkRva);
     return FALSE;
   }
+  if (iatRva == 0 || iatRva > sizeOfImage ||
+      sizeof(UINT64) > sizeOfImage - iatRva) {
+    LoaderLogHex("[loader] fail IAT out of range", iatRva);
+    return FALSE;
+  }
+  //
+  // The INT and the IAT are separate arrays, so the distance from each to the end
+  // of the image is a separate budget. Bounding the loop by the INT alone leaves
+  // the IAT writes unchecked: an image whose IAT starts nearer the end than its
+  // INT does can walk the write pointer off the mapping. In a well-formed image
+  // both tables hold the same number of entries and the terminator stops the walk
+  // first, so this is unreachable today - which is exactly why it is worth
+  // closing now, while the payload is still the only thing that can get here.
+  //
   bytesLeft = sizeOfImage - thunkRva;
+  {
+    UINT32 iatBytesLeft = sizeOfImage - iatRva;
+
+    if (iatBytesLeft < bytesLeft) {
+      bytesLeft = iatBytesLeft;
+    }
+  }
+
+  //
+  // The descriptor's Name is an RVA into the image and has not been checked yet.
+  // It is the first field the loop dereferences, so it gets the same treatment as
+  // the thunk tables rather than being trusted because the payload is embedded.
+  //
+  if (desc->Name > sizeOfImage) {
+    LoaderLogHex("[loader] fail import name rva out of range", desc->Name);
+    return FALSE;
+  }
 
   //
   // lookup is the INT (read-only: it holds the import names the linker wrote),
@@ -100,8 +131,20 @@ static BOOL LdrBindModule(BYTE *base, UINT32 sizeOfImage,
         return FALSE;
       }
     } else {
-      const LdrImportByName *byName =
-          (const LdrImportByName *)LDR_AT(base, target & 0x7FFFFFFF);
+      const LdrImportByName *byName;
+      UINT32 nameRva = (UINT32)(target & 0x7FFFFFFF);
+
+      //
+      // Same reasoning as the descriptor Name above: this RVA comes out of the
+      // image and is about to be dereferenced, so it is checked before use rather
+      // than after something has already read through it.
+      //
+      if (nameRva > sizeOfImage ||
+          sizeof(LdrImportByName) > sizeOfImage - nameRva) {
+        LoaderLogHex("[loader] fail import name rva out of range", nameRva);
+        return FALSE;
+      }
+      byName = (const LdrImportByName *)LDR_AT(base, nameRva);
       //
       // byName->Name, not (char *)byName: the hint is part of the record and is
       // not part of the string.
@@ -111,7 +154,7 @@ static BOOL LdrBindModule(BYTE *base, UINT32 sizeOfImage,
         LoaderLogHex("[loader] fail import name in",
                      (UINT64)(UINT_PTR)moduleName);
         LOADER_TRACE_NAME(byName->Name);
-        LoaderLogHex("[loader] fail import name rva", target & 0x7FFFFFFF);
+        LoaderLogHex("[loader] fail import name rva", nameRva);
         return FALSE;
       }
     }

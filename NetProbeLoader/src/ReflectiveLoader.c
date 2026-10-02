@@ -26,7 +26,7 @@ __declspec(dllexport) BYTE *WINAPI ReflectiveLoad(void);
 // The header is a pointer into the resource, so the file base has to come back
 // too: the copy stage reads sections as file offsets from it.
 //
-static LdrNtHeaders *LdrOpenPayload(const BYTE **fileBase) {
+static LdrNtHeaders *LdrOpenPayload(const BYTE **fileBase, UINT32 *fileSizeOut) {
   HRSRC resource;
   HGLOBAL loaded;
   const BYTE *file;
@@ -116,22 +116,24 @@ static LdrNtHeaders *LdrOpenPayload(const BYTE **fileBase) {
   LoaderLogLine("[loader] payload accepted, size of image",
                 nt->OptionalHeader.SizeOfImage);
   *fileBase = file;
+  *fileSizeOut = fileSize;
   return nt;
 }
 
 __declspec(dllexport) BYTE *WINAPI ReflectiveLoad(void) {
   const BYTE *file;
+  UINT32 fileSize;
   LdrNtHeaders *nt;
   BYTE *base;
   UINT64 delta;
   LdrDllMain entry;
 
-  nt = LdrOpenPayload(&file);
+  nt = LdrOpenPayload(&file, &fileSize);
   if (nt == NULL) {
     return NULL;
   }
 
-  base = LdrMapImage(file, nt);
+  base = LdrMapImage(file, fileSize, nt);
   if (base == NULL) {
     LoaderLogLine("[loader] fail VirtualAlloc for image", 0);
     return NULL;

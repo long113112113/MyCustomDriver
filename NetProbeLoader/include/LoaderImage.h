@@ -27,14 +27,22 @@ extern "C" {
 //
 // Copies headers and sections into freshly reserved memory.
 //
+// fileSize is the length of the buffer file points at. The section copy reads
+// from that buffer at offsets the image itself supplies, so without the length
+// there is no way to tell a legitimate trailing section from one that points
+// past the end of the resource.
+//
 // The preferred base is tried first so an image linked at its own ImageBase
 // needs no relocation fixups at all; the attempt is abandoned if that address is
 // already taken. Anywhere is fine otherwise, because the relocation pass exists
 // exactly so the image does not care where it landed.
 //
-// Returns NULL only when both allocation attempts fail.
+// Returns NULL when allocation fails, or when the image describes a section that
+// does not fit. A section that does not fit is a failure rather than a skip: the
+// alternative is a half-populated image that faults somewhere later, with the
+// real cause left behind in the log.
 //
-BYTE *LdrMapImage(const BYTE *file, const LdrNtHeaders *nt);
+BYTE *LdrMapImage(const BYTE *file, UINT32 fileSize, const LdrNtHeaders *nt);
 
 //
 // Applies IMAGE_REL_BASED_DIR64 fixups for a base that differs from ImageBase.

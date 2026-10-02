@@ -82,8 +82,15 @@ void LoaderLogLine(const char *message, UINT64 value) {
     value /= 10;
   }
 
+  //
+  // Assigned in two statements rather than "buffer[i++] = message[i]". Written the
+  // short way, the side effect of i++ is unsequenced against the value computation
+  // of i in message[i], which leaves the program with undefined behaviour no matter
+  // that every compiler in use happens to evaluate them the convenient way.
+  //
   while (message[i] != '\0' && i < 120) {
-    buffer[i++] = message[i];
+    buffer[i] = message[i];
+    i++;
   }
   buffer[i++] = ' ';
   while (count > 0 && i < 170) {
@@ -113,7 +120,8 @@ void LoaderLogHex(const char *message, UINT64 value) {
   }
 
   while (message[i] != '\0' && i < 120) {
-    buffer[i++] = message[i];
+    buffer[i] = message[i];
+    i++;
   }
   buffer[i++] = ' ';
   buffer[i++] = '0';

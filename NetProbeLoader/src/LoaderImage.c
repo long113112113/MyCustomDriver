@@ -8,9 +8,11 @@
 
 #include <string.h>
 
-BYTE *LdrMapImage(const BYTE *file, const LdrNtHeaders *nt) {
+BYTE *LdrMapImage(const BYTE *file, UINT32 fileSize,
+                  const LdrNtHeaders *nt) {
   const LdrSectionHeader *sections;
   BYTE *base;
+  UINT32 sizeOfImage = nt->OptionalHeader.SizeOfImage;
   UINT32 headers;
   UINT32 i;
 
@@ -30,23 +32,60 @@ BYTE *LdrMapImage(const BYTE *file, const LdrNtHeaders *nt) {
   // Headers first. Everything else - the section table the copy loop walks, the
   // data directories the later stages read - is inside them.
   //
+  // Clamped against both the image and the buffer. The image bound stops a
+  // SizeOfHeaders larger than the image from running off the allocation; the
+  // buffer bound stops it from reading off the end of the resource.
+  //
   headers = nt->OptionalHeader.SizeOfHeaders;
-  if (headers > nt->OptionalHeader.SizeOfImage) {
-    headers = nt->OptionalHeader.SizeOfImage;
+  if (headers > sizeOfImage) {
+    headers = sizeOfImage;
+  }
+  if (headers > fileSize) {
+    LoaderLogHex("[loader] fail SizeOfHeaders past end of payload", headers);
+    VirtualFree(base, 0, MEM_RELEASE);
+    return NULL;
   }
   memcpy(base, file, headers);
 
   sections = LDR_SECTIONS(nt);
   for (i = 0; i < nt->FileHeader.NumberOfSections; i++) {
-    if (sections[i].SizeOfRawData == 0) {
+    UINT32 virtualAddress = sections[i].VirtualAddress;
+    UINT32 rawSize = sections[i].SizeOfRawData;
+    UINT32 rawPointer = sections[i].PointerToRawData;
+
+    //
+    // A section with no file data is a .bss-style section: MEM_COMMIT already
+    // zeroed it, and there is nothing to copy.
+    //
+    if (rawSize == 0) {
       continue;
     }
-    if (sections[i].VirtualAddress + sections[i].SizeOfRawData >
-        nt->OptionalHeader.SizeOfImage) {
-      continue;
+
+    //
+    // Both bounds are written as subtractions rather than sums on purpose.
+    // "virtualAddress + rawSize > sizeOfImage" overflows when the two are chosen
+    // to add up to more than 2^32, wraps to a small number, and passes a check it
+    // was supposed to fail. Comparing the length against what is left cannot wrap.
+    //
+    if (virtualAddress > sizeOfImage || rawSize > sizeOfImage - virtualAddress) {
+      LoaderLogHex("[loader] fail section does not fit the image",
+                   (UINT64)virtualAddress);
+      VirtualFree(base, 0, MEM_RELEASE);
+      return NULL;
     }
-    memcpy(LDR_AT(base, sections[i].VirtualAddress),
-           file + sections[i].PointerToRawData, sections[i].SizeOfRawData);
+
+    //
+    // The other half of the copy. Without this the source read runs off the end
+    // of the resource, because PointerToRawData is a value from the image and the
+    // image is what is being trusted.
+    //
+    if (rawPointer > fileSize || rawSize > fileSize - rawPointer) {
+      LoaderLogHex("[loader] fail section past end of payload", (UINT64)rawPointer);
+      VirtualFree(base, 0, MEM_RELEASE);
+      return NULL;
+    }
+
+    memcpy(LDR_AT(base, virtualAddress), file + rawPointer, rawSize);
   }
   return base;
 }

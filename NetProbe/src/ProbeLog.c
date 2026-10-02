@@ -93,9 +93,15 @@ static size_t LogHex(unsigned long value) {
     value >>= 4;
   }
 
+  //
+  // digits holds characters, not indexes into kHex: the conversion to hex already
+  // happened when the digits were collected. Indexing kHex with them a second
+  // time reads 32 to 54 bytes past the end of a 17-byte array, and every error
+  // code came out empty or as unprintable rubbish.
+  //
   pos = LogEnd();
   while (count > 0 && pos + 1 < LOG_BUFFER_SIZE) {
-    g_log[pos++] = kHex[digits[--count]];
+    g_log[pos++] = digits[--count];
   }
   g_log[pos] = '\0';
   return pos;

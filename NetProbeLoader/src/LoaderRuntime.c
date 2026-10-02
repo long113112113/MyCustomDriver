@@ -19,7 +19,8 @@ void LdrRegisterUnwind(BYTE *base, const LdrNtHeaders *nt) {
   if (dir == NULL || dir->VirtualAddress == 0 || dir->Size == 0) {
     return;
   }
-  if (dir->VirtualAddress + dir->Size > nt->OptionalHeader.SizeOfImage) {
+  if (dir->VirtualAddress > nt->OptionalHeader.SizeOfImage ||
+      dir->Size > nt->OptionalHeader.SizeOfImage - dir->VirtualAddress) {
     LoaderLogLine("[loader] fail unwind directory out of range", 0);
     return;
   }
@@ -63,13 +64,15 @@ void LdrRegisterUnwind(BYTE *base, const LdrNtHeaders *nt) {
 void LdrInvokeTls(BYTE *base, const LdrNtHeaders *nt, DWORD reason) {
   const LdrDataDirectory *dir;
   const LdrTlsDirectory64 *tls;
-  const UINT64 *callbacks;
+
+  UNREFERENCED_PARAMETER(reason);
 
   dir = LdrDirectory(nt, LDR_DIR_TLS);
   if (dir == NULL || dir->VirtualAddress == 0 || dir->Size == 0) {
     return;
   }
-  if (dir->VirtualAddress + dir->Size > nt->OptionalHeader.SizeOfImage) {
+  if (dir->VirtualAddress > nt->OptionalHeader.SizeOfImage ||
+      dir->Size > nt->OptionalHeader.SizeOfImage - dir->VirtualAddress) {
     LoaderLogLine("[loader] fail TLS directory out of range", 0);
     return;
   }
@@ -77,26 +80,30 @@ void LdrInvokeTls(BYTE *base, const LdrNtHeaders *nt, DWORD reason) {
   tls = (const LdrTlsDirectory64 *)LDR_AT(base, dir->VirtualAddress);
 
   //
-  // AddressOfCallbacks is a VA, not an RVA, so by this point relocations have
-  // already moved it onto the mapped base. Using it as an RVA would jump
-  // somewhere unrelated whenever the image did not land at its preferred base.
+  // This loader does not support TLS, and the reason is worth saying out loud
+  // rather than failing quietly.
   //
-  if (tls->AddressOfCallbacks == 0) {
-    return;
-  }
-  if (tls->AddressOfCallbacks < (UINT64)(UINT_PTR)base ||
-      tls->AddressOfCallbacks >= (UINT64)(UINT_PTR)base +
-                                      nt->OptionalHeader.SizeOfImage) {
-    LoaderLogLine("[loader] fail TLS callbacks outside image", 0);
-    return;
-  }
-
-  callbacks = (const UINT64 *)(UINT_PTR)tls->AddressOfCallbacks;
-  while (*callbacks != 0) {
-    LdrDllMain callback = (LdrDllMain)(UINT_PTR)*callbacks;
-    if (callback != NULL) {
-      callback((HINSTANCE)base, reason, NULL);
-    }
-    callbacks++;
+  // Bringing TLS up means allocating an index from the process-wide TLS table,
+  // publishing the template's raw data, and having every new thread copy and
+  // zero-fill it. None of that happens here.
+  //
+  // The previous version of this function read the wrong field, AddressOfIndex
+  // rather than AddressOfCallBacks, so it followed a small integer, failed a
+  // range check against the image and returned in silence. A loader that quietly
+  // skips TLS callbacks looks exactly like one that ran them, which is how a
+  // payload using __declspec(thread) would have started misbehaving with nothing
+  // in the log to explain it.
+  //
+  // Refusing here is deliberate. Running the callbacks without an index would
+  // hand them a TLS variable that was never allocated, which is a crash in the
+  // host rather than a gap in the payload. Announce it and let the caller decide.
+  //
+  // Two details to keep in mind when TLS support does land: AddressOfCallBacks is
+  // a VA rather than an RVA, so relocations have already moved it onto the
+  // mapped base by this point; and every entry in the array is likewise a
+  // relocated VA, because the linker emits a DIR64 fixup for each slot.
+  //
+  if (tls->AddressOfCallBacks != 0) {
+    LoaderLogLine("[loader] warn TLS directory present but unsupported", 0);
   }
 }

@@ -49,7 +49,15 @@
 
 typedef struct {
   UINT16 Machine;
-  UINT8 NumberOfSections;
+  //
+  // NumberOfSections is a WORD in the PE specification. Declaring it narrower is
+  // not free even though it happens to be harmless: the byte of padding that
+  // follows keeps every other field at the offset the specification fixes, and
+  // sizeof() stays 20, so nothing else in this struct moves. What is lost is the
+  // top byte, so an image declaring more than 255 sections would have its last
+  // ones silently dropped from the copy and protection passes.
+  //
+  UINT16 NumberOfSections;
   UINT32 TimeDateStamp;
   UINT32 PointerToSymbolTable;
   UINT32 NumberOfSymbols;
@@ -137,10 +145,23 @@ typedef struct {
   CHAR Name[1];
 } LdrImportByName;
 
+//
+// IMAGE_TLS_DIRECTORY64. All four leading fields are 64-bit, which is the whole
+// point of this struct: with only three of them, AddressOfCallBacks lands on
+// AddressOfIndex, and a reader then follows the TLS index variable as though it
+// were the callback array. That value is a small integer, so it fails any range
+// check against the image and the callbacks are skipped without a word of
+// diagnostics. sizeof() is 40 here against 32 for the short version, which is the
+// cheapest way to notice the mistake had been made.
+//
+// Field names and spelling follow winnt.h, including the capital B in CallBacks,
+// so the two can be compared field by field without mentally translating.
+//
 typedef struct {
-  UINT64 AddressOfData;
+  UINT64 StartAddressOfRawData;
+  UINT64 EndAddressOfRawData;
   UINT64 AddressOfIndex;
-  UINT64 AddressOfCallbacks;
+  UINT64 AddressOfCallBacks;
   UINT32 SizeOfZeroFill;
   UINT32 Characteristics;
 } LdrTlsDirectory64;
