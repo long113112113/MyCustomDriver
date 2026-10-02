@@ -15,6 +15,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HostListener", "HostListene
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NetProbe", "NetProbe\NetProbe.vcxproj", "{5D3A7C18-9E64-4B27-A0F1-63C8E2B94D7A}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NetProbeLoader", "NetProbeLoader\NetProbeLoader.vcxproj", "{A7C41E93-58B2-4D6F-9E10-3B5D82C7F481}"
+	ProjectSection(ProjectDependencies) = postProject
+		{5D3A7C18-9E64-4B27-A0F1-63C8E2B94D7A} = {5D3A7C18-9E64-4B27-A0F1-63C8E2B94D7A}
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|ARM64 = Debug|ARM64
@@ -55,6 +60,10 @@ Global
 		{5D3A7C18-9E64-4B27-A0F1-63C8E2B94D7A}.Debug|x64.Build.0 = Debug|x64
 		{5D3A7C18-9E64-4B27-A0F1-63C8E2B94D7A}.Release|x64.ActiveCfg = Release|x64
 		{5D3A7C18-9E64-4B27-A0F1-63C8E2B94D7A}.Release|x64.Build.0 = Release|x64
+		{A7C41E93-58B2-4D6F-9E10-3B5D82C7F481}.Debug|x64.ActiveCfg = Debug|x64
+		{A7C41E93-58B2-4D6F-9E10-3B5D82C7F481}.Debug|x64.Build.0 = Debug|x64
+		{A7C41E93-58B2-4D6F-9E10-3B5D82C7F481}.Release|x64.ActiveCfg = Release|x64
+		{A7C41E93-58B2-4D6F-9E10-3B5D82C7F481}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

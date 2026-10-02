@@ -1,13 +1,15 @@
-#include "Probe.h"
+#include "NetProbe.h"
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 
 //
 // Kept deliberately thin.
 //
-// The reflective loader added later calls into this same file, so the boundary
-// between "loader brings the image up" and "image starts working" stays in one
+// The reflective loader calls into the mapped image, so the boundary between
+// "loader brings the image up" and "image starts working" has to stay in one
 // place: DllMain is the only thing that starts the probe, and NetProbeStart is
 // the only thing it calls.
 //

@@ -9,36 +9,51 @@
       <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
       <Extensions>h;hh;hpp;hxx</Extensions>
     </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6BC6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;rc2;resx</Extensions>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Entry.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\ProbeLog.c">
+    <ClCompile Include="src\LoaderImage.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\ProbeNet.c">
+    <ClCompile Include="src\LoaderImport.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\ProbeWinsock.c">
+    <ClCompile Include="src\LoaderLog.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\ProbeWorker.c">
+    <ClCompile Include="src\LoaderReloc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\LoaderRuntime.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ReflectiveLoader.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\NetProbe.h">
+    <ClInclude Include="include\LoaderImage.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\ProbeLog.h">
+    <ClInclude Include="include\LoaderLog.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\ProbeNet.h">
+    <ClInclude Include="include\LoaderPe.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\ProbeWinsock.h">
+    <ClInclude Include="include\LoaderSelf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="res\loader.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

@@ -1,11 +1,10 @@
-#pragma once
-#ifndef NETPROBE_PROBE_H
-#define NETPROBE_PROBE_H
+#ifndef NETPROBE_NETPROBE_H
+#define NETPROBE_NETPROBE_H
 
 //
 // Probe parameters. These mirror the kernel WSK probe that was removed: the same
-// host, port, payload and cadence, so behaviour can be compared directly once the
-// network layer moves out of the driver.
+// host, port, payload and cadence, so behaviour can be compared directly now that
+// the network layer lives in usermode.
 //
 #define NETPROBE_HOST "192.168.153.1"
 #define NETPROBE_PORT 8080
@@ -25,7 +24,7 @@ extern "C" {
 // Nothing outside this DLL triggers a probe: no IOCTL, no client, no arguments.
 //
 // Returns 1 if the worker was started, 0 otherwise. Safe to call more than once;
-// subsequent calls while running are no-ops and return 1.
+// calls made while already running are no-ops and return 1.
 //
 __declspec(dllexport) int NetProbeStart(void);
 

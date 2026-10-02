@@ -1,0 +1,7 @@
+//
+// Payload to embed.
+//
+// The name has to match what NetProbeLoader.vcxproj stages into this directory
+// before the build; the ID and type are what ReflectiveLoad looks up.
+//
+1 RCDATA "NetProbePayload.dll"

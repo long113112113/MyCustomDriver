@@ -4,6 +4,11 @@ x64/
 KMDF Driver/compile_flags.txt
 Driver/compile_flags.txt
 Client/compile_flags.txt
+NetProbe/compile_flags.txt
+NetProbe/src/compile_flags.txt
+NetProbeLoader/compile_flags.txt
+NetProbeLoader/src/compile_flags.txt
+HostListener/compile_flags.txt
 Client/x64/
 doc/
 VM_Logs/
