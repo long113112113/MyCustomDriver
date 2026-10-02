@@ -445,7 +445,6 @@ NTSTATUS EtwTiQueryStatus(PETWTI_STATUS_RESPONSE Response) {
   return status;
 }
 
-BOOLEAN EtwTiIsDisabled(VOID) { return g_Disabled; }
 
 //
 // Auto-apply worker

@@ -233,13 +233,6 @@ typedef struct _ETWTI_STATUS_RESPONSE {
   ULONG ArmAttempts;
 } ETWTI_STATUS_RESPONSE, *PETWTI_STATUS_RESPONSE;
 
-// The WSK_STATUS_RESPONSE / WSK_PROBE_RESPONSE structures that accompanied
-// IOCTL_WSK_STATUS / IOCTL_WSK_PROBE were removed with those IOCTLs. The WSK
-// probe now runs on a timer inside the driver and logs to DbgPrint, so nothing
-// needed a client-facing contract; the probe result is a private type in
-// WskClient.c.
-//
-
 // default response
 typedef struct _DRIVER_RESPONSE {
   NTSTATUS Status;

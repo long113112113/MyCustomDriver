@@ -58,10 +58,6 @@ NTSTATUS EtwTiEnable(PETWTI_STATUS_RESPONSE Response);
 //
 NTSTATUS EtwTiQueryStatus(PETWTI_STATUS_RESPONSE Response);
 
-//
-// TRUE while ETW-TI is disabled by this module.
-//
-BOOLEAN EtwTiIsDisabled(VOID);
 
 //
 // Starts the background worker that applies the disable on its own, so a client
