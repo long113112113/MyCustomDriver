@@ -26,9 +26,6 @@ typedef LONG NTSTATUS;
 // Basic control
 #define IOCTL_PING                                                             \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_GET_VERSION                                                      \
-  CTL_CODE(DRIVER_DEVICE_TYPE, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
-//
 // Query PatchGuard bypass state. Output DRIVER_RESPONSE:
 //   Status = STATUS_SUCCESS, Data = 1 (bypassed) / 0 (safe mode).
 //
@@ -84,14 +81,9 @@ typedef LONG NTSTATUS;
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x90F, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 //
-// Disable / restore / query the Microsoft-Windows-Threat-Intelligence (ETW-TI)
-// provider. DISABLE and ENABLE take no input; STATUS answers
-// ETWTI_STATUS_RESPONSE.
+// Query the Microsoft-Windows-Threat-Intelligence (ETW-TI) provider state.
+// Answers ETWTI_STATUS_RESPONSE.
 //
-#define IOCTL_ETWTI_DISABLE                                                    \
-  CTL_CODE(DRIVER_DEVICE_TYPE, 0x910, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_ETWTI_ENABLE                                                     \
-  CTL_CODE(DRIVER_DEVICE_TYPE, 0x911, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_ETWTI_STATUS                                                     \
   CTL_CODE(DRIVER_DEVICE_TYPE, 0x912, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
@@ -199,7 +191,7 @@ typedef struct _ELEVATE_STATUS_RESPONSE {
 } ELEVATE_STATUS_RESPONSE, *PELEVATE_STATUS_RESPONSE;
 
 //
-// Output of IOCTL_ETWTI_DISABLE / IOCTL_ETWTI_ENABLE / IOCTL_ETWTI_STATUS.
+// Output of IOCTL_ETWTI_STATUS.
 //
 // The resolved chain is reported verbatim so a failed run can be diagnosed from
 // a debugger dump without re-running the resolution. Addresses are reported as

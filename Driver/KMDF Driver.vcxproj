@@ -164,15 +164,6 @@
     <ClCompile Include="Kurasagi\Util\Arith.cpp" />
     <ClCompile Include="Kurasagi\Util\Memory.cpp" />
   </ItemGroup>
-  <!--
-    Zydis/Zycore was vendored here for Probe\ProbeGadgets.c, the FF E1 gadget
-    scanner. That scanner walked .pdata CFGs across every loaded module and
-    produced no usable gadget: all 49 candidates were mid-instruction or
-    unreachable. The callback gate is now relaxed directly in
-    ObRegisterCallbacks (see ObGatePatch.c), so the dependency was removed
-    instead of being carried in a kernel image. Re-adding it means re-vendoring
-    ~28k lines and reintroducing the IOCTL_PROBE_CALLBACK_MODULES operation.
-  -->
   <ItemGroup>
     <ClInclude Include="Device.h" />
     <ClInclude Include="Dispatch.h" />

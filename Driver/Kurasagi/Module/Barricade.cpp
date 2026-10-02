@@ -148,7 +148,6 @@ BOOLEAN wsbp::Barricade::CustomNxFaultHandler(void *faultAddress,
   // I'll add features if it gets detected, currently I think I bypassed all
   // WITHOUT barricade method, so I'll keep it next
 
-  TODO("Add detailed tracing");
 
   // -=-=-=-=-=-=-=-=-=-=-=-= Debug -=-=-=-=-=-=-=-=-=-=-=-=
 

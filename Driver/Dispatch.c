@@ -73,21 +73,6 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
     break;
 
   // ------------------------------------------------------
-  // GET_VERSION
-  // ------------------------------------------------------
-  case IOCTL_GET_VERSION:
-    DbgPrint("GET_VERSION called\n");
-    if (outputLength >= sizeof(DRIVER_RESPONSE)) {
-      PDRIVER_RESPONSE response = (PDRIVER_RESPONSE)outputBuffer;
-      response->Status = STATUS_SUCCESS;
-      response->Data = 0x00010000;
-      bytesReturned = sizeof(DRIVER_RESPONSE);
-    } else {
-      status = STATUS_BUFFER_TOO_SMALL;
-    }
-    break;
-
-  // ------------------------------------------------------
   // GET_PG_STATUS
   // ------------------------------------------------------
   case IOCTL_GET_PG_STATUS:
@@ -308,10 +293,8 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
   }
 
   // ------------------------------------------------------
-  // ETW-TI provider control (see EtwTi.c)
+  // ETW-TI provider status (see EtwTi.c)
   // ------------------------------------------------------
-  case IOCTL_ETWTI_DISABLE:
-  case IOCTL_ETWTI_ENABLE:
   case IOCTL_ETWTI_STATUS: {
     NTSTATUS moduleStatus;
 
@@ -323,17 +306,7 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
       break;
     }
 
-    switch (ioctlCode) {
-    case IOCTL_ETWTI_DISABLE:
-      moduleStatus = EtwTiDisable((PETWTI_STATUS_RESPONSE)outputBuffer);
-      break;
-    case IOCTL_ETWTI_ENABLE:
-      moduleStatus = EtwTiEnable((PETWTI_STATUS_RESPONSE)outputBuffer);
-      break;
-    default:
-      moduleStatus = EtwTiQueryStatus((PETWTI_STATUS_RESPONSE)outputBuffer);
-      break;
-    }
+    moduleStatus = EtwTiQueryStatus((PETWTI_STATUS_RESPONSE)outputBuffer);
 
     bytesReturned = sizeof(ETWTI_STATUS_RESPONSE);
 
