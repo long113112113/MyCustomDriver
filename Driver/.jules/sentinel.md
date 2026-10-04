@@ -35,3 +35,14 @@ Tracing the execution path through `Driver/Kurasagi/Global.cpp` demonstrates tha
 - **Do NOT propose adding a local NULL check for `gl::RtVar::MmAccessFaultPtr` in `Bypass.c`.** The pointer is guaranteed to be non-NULL if `InitializeRuntimeVariables()` succeeds. Adding a local check creates unreachable dead code and false diagnostic signals.
 - **Do NOT assume vendored Kurasagi initialization routines silently succeed on scan failure.** The `res &= ...` accumulation guarantees atomic success across all required signatures before returning `TRUE`.
 - Respect inter-procedural invariants between `Driver/Bypass.c` and `Driver/Kurasagi/Global.cpp`.
+
+## 2026-09-30 - Check-then-act Races Across Lock Releases in Hidden Registries
+
+**Defect:**
+Lookup functions reading a pointer/node from a tracking array under a mutex (`g_HiddenListLock` / `g_HiddenThreadLock`) and releasing the mutex before acting on and removing the node allow concurrent callers to execute duplicate actions and double-dereference `EPROCESS`/`ETHREAD` pointers (CWE-362 / CWE-416).
+
+**Learning:**
+Any registry unhide or cleanup helper must atomically claim and remove the tracking entry from the internal registry inside the lock scope before releasing the lock. Attempting a separate lookup followed by a post-action removal creates an un-synchronized window across the lock release.
+
+**Prevention:**
+Ensure registry removals are performed atomically within the initial lookup lock acquisition block.

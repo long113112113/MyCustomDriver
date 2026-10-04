@@ -205,12 +205,15 @@ NTSTATUS ProcessUnhide(ULONG ProcessId) {
   if (activeLinksOffset == 0 || lockOffset == 0)
     return STATUS_UNSUCCESSFUL;
 
-  // Resolve the saved list node and process object for the given PID.
+  // Atomically claim and remove the saved list node and process object for
+  // the given PID under g_HiddenListLock to prevent concurrent unhide races.
   ExAcquireFastMutex(&g_HiddenListLock);
   for (i = 0; i < g_HiddenProcessCount; i++) {
     if (g_HiddenProcesses[i].ProcessId == ProcessId) {
       originalLinks = g_HiddenProcesses[i].OriginalLinks;
       targetProcess = g_HiddenProcesses[i].ProcessObject;
+      g_HiddenProcesses[i] = g_HiddenProcesses[g_HiddenProcessCount - 1];
+      g_HiddenProcessCount--;
       break;
     }
   }
@@ -251,8 +254,6 @@ NTSTATUS ProcessUnhide(ULONG ProcessId) {
 
   // Release the reference held since ProcessHide
   ObDereferenceObject(targetProcess);
-
-  RemoveHiddenProcess(ProcessId);
 
   DbgPrint("Revealed process %lu.\n", ProcessId);
   return status;
