@@ -139,14 +139,17 @@ NTSTATUS NetProbeInjectIntoProcess(ULONG TargetPid) {
                        sizeof(magic))) &&
         magic == RL_STATUS_MAGIC) {
       ULONG_PTR mappedBase = 0;
+      ULONG step = 0;
 
       RemoteInjectRead(TargetPid,
                        (PUCHAR)statusBase + RL_STATUS_OFFSET_BASE,
                        &mappedBase, sizeof(mappedBase));
+      RemoteInjectRead(TargetPid, (PUCHAR)statusBase + 12, &step,
+                       sizeof(step));
 
       DbgPrint("[LongsDriver] NetProbeInject: loader completed, mapped base "
-               "%p.\n",
-               (PVOID)mappedBase);
+               "%p, fail step %lu.\n",
+               (PVOID)mappedBase, step);
 
       //
       // Deliberately do not release remoteBase or statusBase here.

@@ -456,20 +456,26 @@ static ULONG_PTR RlMapImage(LPVOID Parameter) {
   RL_DLL_MAIN entry;
 
   rawBase = RlFindOwnBase((PVOID)&RlMapImage);
-  if (rawBase == NULL)
+  if (rawBase == NULL) {
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 3;
     return 0;
+  }
 
   nt = (const IMAGE_NT_HEADERS *)((const BYTE *)rawBase +
                                   ((const IMAGE_DOS_HEADER *)rawBase)
                                       ->e_lfanew);
 
   kernel32 = RlGetModuleBase("kernel32.dll");
-  if (kernel32 == NULL)
+  if (kernel32 == NULL) {
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 4;
     return 0;
+  }
   getProcAddress = (RL_GET_PROC_ADDRESS)RlFindExport(kernel32,
                                                      "GetProcAddress");
-  if (getProcAddress == NULL)
+  if (getProcAddress == NULL) {
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 5;
     return 0;
+  }
 
   loadLibraryA =
       (RL_LOAD_LIBRARY_A)getProcAddress((HMODULE)kernel32, "LoadLibraryA");
@@ -479,8 +485,10 @@ static ULONG_PTR RlMapImage(LPVOID Parameter) {
       (RL_VIRTUAL_PROTECT)getProcAddress((HMODULE)kernel32, "VirtualProtect");
   flushInstructionCache = (RL_FLUSH_INSTRUCTION_CACHE)getProcAddress(
       (HMODULE)kernel32, "FlushInstructionCache");
-  if (loadLibraryA == NULL || virtualAlloc == NULL || virtualProtect == NULL)
+  if (loadLibraryA == NULL || virtualAlloc == NULL || virtualProtect == NULL) {
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 6;
     return 0;
+  }
 
   ntdll = RlGetModuleBase("ntdll.dll");
   addFunctionTable = NULL;
@@ -501,8 +509,10 @@ static ULONG_PTR RlMapImage(LPVOID Parameter) {
     imageBase = virtualAlloc(NULL, nt->OptionalHeader.SizeOfImage,
                              MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
   }
-  if (imageBase == NULL)
+  if (imageBase == NULL) {
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 7;
     return 0;
+  }
 
   //
   // Copy headers and sections from the raw file copy. VirtualAlloc zeroed the
@@ -527,11 +537,15 @@ static ULONG_PTR RlMapImage(LPVOID Parameter) {
   delta = (ULONG_PTR)imageBase - (ULONG_PTR)nt->OptionalHeader.ImageBase;
   RlApplyRelocations((BYTE *)imageBase, nt, delta);
 
-  if (!RlBindImports((BYTE *)imageBase, nt, loadLibraryA, getProcAddress))
+  if (!RlBindImports((BYTE *)imageBase, nt, loadLibraryA, getProcAddress)) {
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 8;
     return 0;
+  }
 
-  if (!RlProtect((BYTE *)imageBase, nt, virtualProtect))
+  if (!RlProtect((BYTE *)imageBase, nt, virtualProtect)) {
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 9;
     return 0;
+  }
 
   RlRegisterUnwind((BYTE *)imageBase, nt, addFunctionTable);
 
@@ -580,8 +594,14 @@ REFLECTIVE_LOADER_API ULONG_PTR WINAPI ReflectiveLoader(LPVOID Parameter) {
   imageBase = RlMapImage(Parameter);
 
   if (Parameter != NULL) {
-    *(volatile DWORD *)((BYTE *)Parameter + 4) = RL_STATUS_MAGIC;
+    //
+    // Publish the base before the magic: the driver polls the magic word and
+    // then reads the base, so with the opposite order it can observe the magic
+    // while the base is still the page's initial zero.
+    //
     *(volatile ULONG_PTR *)((BYTE *)Parameter + 8) = imageBase;
+    MemoryBarrier();
+    *(volatile DWORD *)((BYTE *)Parameter + 4) = RL_STATUS_MAGIC;
   }
 
   return imageBase;

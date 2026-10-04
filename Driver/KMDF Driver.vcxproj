@@ -18,6 +18,17 @@
       <Platform>ARM64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <!--
+    Building the driver project directly must build the userspace pieces it
+    embeds or stages first. A <ProjectReference> does not work here: the WDK
+    build asks each referenced project for the "GetDriverProjectAttributes"
+    target, which only kernel projects have. Invoke msbuild on them instead.
+  -->
+  <Target Name="BuildUserspaceProjects" BeforeTargets="PreBuildEvent">
+    <MSBuild Projects="..\NetProbe\NetProbe.vcxproj" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform)" />
+    <MSBuild Projects="..\NetProbeLoader\NetProbeLoader.vcxproj" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform)" />
+    <MSBuild Projects="..\HostListener\HostListener.vcxproj" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform)" />
+  </Target>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{EB8BCBD5-FAE7-0E54-0524-DEE5F81B0BDB}</ProjectGuid>
     <TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>

