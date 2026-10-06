@@ -18,6 +18,7 @@ NTSTATUS TaskBuildTaskXml(PWCHAR xml, ULONG xmlCapacityChars, PULONG charCount,
   SIZE_T xmlLength = 0;
   PUNICODE_STRING command = NULL;
   PWCHAR toFree = NULL;
+  PUNICODE_STRING imagePathToFree = NULL;
 
   if (g_clientImagePath[0] != L'\0') {
     // Authoritative: the client supplied its own Win32 path.
@@ -30,13 +31,14 @@ NTSTATUS TaskBuildTaskXml(PWCHAR xml, ULONG xmlCapacityChars, PULONG charCount,
     PSE_LOCATE_PROCESS_IMAGE_NAME locateImage =
         (PSE_LOCATE_PROCESS_IMAGE_NAME)ResolveExportByWChar(
             L"SeLocateProcessImageName");
-    PUNICODE_STRING imagePath;
+    PUNICODE_STRING imagePath = NULL;
     if (locateImage == NULL)
       return STATUS_PROCEDURE_NOT_FOUND;
     status = locateImage(PsGetCurrentProcess(), &imagePath);
     if (!NT_SUCCESS(status) || imagePath == NULL || imagePath->Buffer == NULL)
       return STATUS_UNSUCCESSFUL;
 
+    imagePathToFree = imagePath;
     command = imagePath;
     UNICODE_STRING dosPath;
     NTSTATUS dosStatus = TaskImagePathToDos(imagePath, &dosPath);
@@ -97,6 +99,16 @@ NTSTATUS TaskBuildTaskXml(PWCHAR xml, ULONG xmlCapacityChars, PULONG charCount,
       L"  </Actions>\r\n"
       L"</Task>\r\n",
       enabled ? L"true" : L"false", enabled ? L"true" : L"false", command);
+
+  if (toFree != NULL) {
+    ExFreePoolWithTag(toFree, TASK_POOL_TAG);
+    toFree = NULL;
+  }
+  if (imagePathToFree != NULL) {
+    ExFreePool(imagePathToFree);
+    imagePathToFree = NULL;
+  }
+
   if (!NT_SUCCESS(status))
     return status;
 
@@ -104,10 +116,6 @@ NTSTATUS TaskBuildTaskXml(PWCHAR xml, ULONG xmlCapacityChars, PULONG charCount,
   if (!NT_SUCCESS(status))
     return status;
 
-  if (toFree != NULL) {
-    ExFreePoolWithTag(toFree, TASK_POOL_TAG);
-    toFree = NULL;
-  }
   if (charCount)
     *charCount = (ULONG)xmlLength;
   return STATUS_SUCCESS;
