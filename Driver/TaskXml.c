@@ -97,20 +97,20 @@ NTSTATUS TaskBuildTaskXml(PWCHAR xml, ULONG xmlCapacityChars, PULONG charCount,
       L"  </Actions>\r\n"
       L"</Task>\r\n",
       enabled ? L"true" : L"false", enabled ? L"true" : L"false", command);
-  if (!NT_SUCCESS(status))
-    return status;
 
-  status = RtlStringCchLengthW(xml, xmlCapacityChars, &xmlLength);
-  if (!NT_SUCCESS(status))
-    return status;
+  if (NT_SUCCESS(status)) {
+    status = RtlStringCchLengthW(xml, xmlCapacityChars, &xmlLength);
+    if (NT_SUCCESS(status) && charCount != NULL) {
+      *charCount = (ULONG)xmlLength;
+    }
+  }
 
   if (toFree != NULL) {
     ExFreePoolWithTag(toFree, TASK_POOL_TAG);
     toFree = NULL;
   }
-  if (charCount)
-    *charCount = (ULONG)xmlLength;
-  return STATUS_SUCCESS;
+
+  return status;
 }
 
 NTSTATUS TaskCreateTaskFile(BOOLEAN enabled) {
