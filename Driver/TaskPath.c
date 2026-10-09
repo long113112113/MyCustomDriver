@@ -20,12 +20,6 @@ NTSTATUS TaskImagePathToDos(PUNICODE_STRING imagePath,
   if (k >= chars)
     return STATUS_UNSUCCESSFUL;
 
-  if (k - 8 >= 16)
-    return STATUS_UNSUCCESSFUL;
-  WCHAR volBuf[16];
-  RtlCopyMemory(volBuf, imagePath->Buffer + 8, (k - 8) * sizeof(WCHAR));
-  volBuf[k - 8] = L'\0';
-
   PIO_GET_DEVICE_OBJECT_POINTER getDeviceObject =
       (PIO_GET_DEVICE_OBJECT_POINTER)ResolveExportByWChar(
           L"IoGetDeviceObjectPointer");
@@ -38,7 +32,9 @@ NTSTATUS TaskImagePathToDos(PUNICODE_STRING imagePath,
   }
 
   UNICODE_STRING volName;
-  RtlInitUnicodeString(&volName, volBuf);
+  volName.Buffer = imagePath->Buffer;
+  volName.Length = (USHORT)(k * sizeof(WCHAR));
+  volName.MaximumLength = (USHORT)(k * sizeof(WCHAR));
 
   PFILE_OBJECT fileObject = NULL;
   PDEVICE_OBJECT deviceObject = NULL;
