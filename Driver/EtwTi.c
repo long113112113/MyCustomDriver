@@ -579,24 +579,10 @@ static VOID EtwTiAutoThread(PVOID Context) {
   }
 
   //
-  // Hold phase. Nothing is expected to re-enable a latched provider, but the
-  // write above deliberately takes no lock, so confirm rather than assume - and
-  // report the moment it turns out to be needed, because that is exactly the
-  // race the missing lock was accepted to risk.
+  // One-shot mode: arm once and exit. The periodic re-assert loop was removed
+  // because it patched memory into region owned by the OS and ran into Patch
+  // Guard timing windows.
   //
-  //
-  // The loop outlives an explicit Enable rather than exiting on it: the worker
-  // goes idle while the module holds nothing, so a later Disable is picked up
-  // again. Exiting here would make the hold permanently unavailable for the rest
-  // of the boot, since EtwTiInitialize is called once and has no caller to
-  // restart it.
-  //
-  for (;;) {
-    SleepInterval(ETW_TI_HOLD_INTERVAL_MS);
-
-    if (g_Disabled && !g_AutoSuspended)
-      EtwTiReassert();
-  }
 }
 
 //

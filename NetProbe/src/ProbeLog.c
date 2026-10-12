@@ -147,6 +147,7 @@ static void LogFlush(void) {
     WriteFile(g_logFile, "\r\n", 2, NULL, NULL);
   }
   OutputDebugStringA(g_log);
+  OutputDebugStringA("\n");
   ReleaseSRWLockExclusive(&g_logLock);
 }
 

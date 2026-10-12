@@ -322,7 +322,8 @@ static void RlApplyRelocations(BYTE *Base, const IMAGE_NT_HEADERS *Nt,
 
 static BOOL RlBindImports(BYTE *Base, const IMAGE_NT_HEADERS *Nt,
                           RL_LOAD_LIBRARY_A LoadLibraryA,
-                          RL_GET_PROC_ADDRESS GetProcAddress) {
+                          RL_GET_PROC_ADDRESS GetProcAddress,
+                          LPVOID Parameter) {
   const IMAGE_DATA_DIRECTORY *directory =
       &Nt->OptionalHeader.DataDirectory[RL_DIR_IMPORT];
   const IMAGE_IMPORT_DESCRIPTOR *descriptor;
@@ -344,8 +345,17 @@ static BOOL RlBindImports(BYTE *Base, const IMAGE_NT_HEADERS *Nt,
       break;
 
     module = LoadLibraryA((const char *)(Base + descriptor->Name));
-    if (module == NULL)
+    if (module == NULL) {
+      if (Parameter != NULL) {
+        ULONG i;
+        *(volatile DWORD *)((BYTE *)Parameter + 24) = 1;
+        for (i = 0; i < 32 && Base[descriptor->Name + i] != '\0'; i++)
+          ((volatile char *)((BYTE *)Parameter + 28))[i] =
+              (char)Base[descriptor->Name + i];
+        ((volatile char *)((BYTE *)Parameter + 28))[i] = '\0';
+      }
       return FALSE;
+    }
 
     lookup = (const ULONG_PTR *)(Base + (descriptor->OriginalFirstThunk != 0
                                              ? descriptor->OriginalFirstThunk
@@ -360,15 +370,27 @@ static BOOL RlBindImports(BYTE *Base, const IMAGE_NT_HEADERS *Nt,
 
       if ((target & RL_ORDINAL_FLAG) != 0) {
         FARPROC resolved = GetProcAddress(module, (LPCSTR)(target & 0xFFFF));
-        if (resolved == NULL)
+        if (resolved == NULL) {
+          if (Parameter != NULL)
+            *(volatile DWORD *)((BYTE *)Parameter + 24) = 2;
           return FALSE;
+        }
         *address = (ULONG_PTR)resolved;
       } else {
         const IMAGE_IMPORT_BY_NAME *byName =
             (const IMAGE_IMPORT_BY_NAME *)(Base + (ULONG)target);
         FARPROC resolved = GetProcAddress(module, (LPCSTR)byName->Name);
-        if (resolved == NULL)
+        if (resolved == NULL) {
+          if (Parameter != NULL) {
+            ULONG i;
+            *(volatile DWORD *)((BYTE *)Parameter + 24) = 3;
+            for (i = 0; i < 32 && byName->Name[i] != '\0'; i++)
+              ((volatile char *)((BYTE *)Parameter + 28))[i] =
+                  (char)byName->Name[i];
+            ((volatile char *)((BYTE *)Parameter + 28))[i] = '\0';
+          }
           return FALSE;
+        }
         *address = (ULONG_PTR)resolved;
       }
       lookup++;
@@ -451,13 +473,11 @@ static ULONG_PTR RlMapImage(LPVOID Parameter) {
   RL_RTL_ADD_FUNCTION_TABLE addFunctionTable;
   PVOID imageBase;
   ULONG_PTR delta;
-  const IMAGE_SECTION_HEADER *sections;
-  WORD index;
   RL_DLL_MAIN entry;
 
   rawBase = RlFindOwnBase((PVOID)&RlMapImage);
   if (rawBase == NULL) {
-    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 3;
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 16) = 12;
     return 0;
   }
 
@@ -467,26 +487,27 @@ static ULONG_PTR RlMapImage(LPVOID Parameter) {
 
   kernel32 = RlGetModuleBase("kernel32.dll");
   if (kernel32 == NULL) {
-    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 4;
+    if (Parameter != NULL)
+      *(volatile DWORD *)((BYTE *)Parameter + 16) = 13;
     return 0;
   }
   getProcAddress = (RL_GET_PROC_ADDRESS)RlFindExport(kernel32,
-                                                     "GetProcAddress");
+                   "GetProcAddress");
   if (getProcAddress == NULL) {
-    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 5;
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 16) = 14;
     return 0;
   }
 
-  loadLibraryA =
-      (RL_LOAD_LIBRARY_A)getProcAddress((HMODULE)kernel32, "LoadLibraryA");
-  virtualAlloc =
-      (RL_VIRTUAL_ALLOC)getProcAddress((HMODULE)kernel32, "VirtualAlloc");
-  virtualProtect =
-      (RL_VIRTUAL_PROTECT)getProcAddress((HMODULE)kernel32, "VirtualProtect");
+  loadLibraryA = (RL_LOAD_LIBRARY_A)getProcAddress(
+      (HMODULE)kernel32, "LoadLibraryA");
+  virtualAlloc = (RL_VIRTUAL_ALLOC)getProcAddress(
+      (HMODULE)kernel32, "VirtualAlloc");
+  virtualProtect = (RL_VIRTUAL_PROTECT)getProcAddress(
+      (HMODULE)kernel32, "VirtualProtect");
   flushInstructionCache = (RL_FLUSH_INSTRUCTION_CACHE)getProcAddress(
       (HMODULE)kernel32, "FlushInstructionCache");
   if (loadLibraryA == NULL || virtualAlloc == NULL || virtualProtect == NULL) {
-    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 6;
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 16) = 15;
     return 0;
   }
 
@@ -510,40 +531,34 @@ static ULONG_PTR RlMapImage(LPVOID Parameter) {
                              MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
   }
   if (imageBase == NULL) {
-    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 7;
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 16) = 16;
     return 0;
   }
 
   //
-  // Copy headers and sections from the raw file copy. VirtualAlloc zeroed the
-  // reservation, so uninitialized sections need no explicit clear.
+  // The staging copy handed to this loader already carries the image's virtual
+  // layout (headers at offset 0, sections at their RVAs), so the payload's
+  // mapped image is a verbatim copy of the staging buffer. VirtualAlloc zeroed
+  // the reservation, so the zero-padded tail and uninitialized sections need no
+  // explicit clear.
   //
   {
-    SIZE_T headers = nt->OptionalHeader.SizeOfHeaders;
-    if (headers > nt->OptionalHeader.SizeOfImage)
-      headers = nt->OptionalHeader.SizeOfImage;
-    RlCopy(imageBase, rawBase, headers);
-  }
+    SIZE_T copySize = nt->OptionalHeader.SizeOfImage;
 
-  sections = IMAGE_FIRST_SECTION(nt);
-  for (index = 0; index < nt->FileHeader.NumberOfSections; index++) {
-    if (sections[index].SizeOfRawData == 0)
-      continue;
-    RlCopy((BYTE *)imageBase + sections[index].VirtualAddress,
-           (const BYTE *)rawBase + sections[index].PointerToRawData,
-           sections[index].SizeOfRawData);
+    RlCopy(imageBase, rawBase, copySize);
   }
 
   delta = (ULONG_PTR)imageBase - (ULONG_PTR)nt->OptionalHeader.ImageBase;
   RlApplyRelocations((BYTE *)imageBase, nt, delta);
 
-  if (!RlBindImports((BYTE *)imageBase, nt, loadLibraryA, getProcAddress)) {
-    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 8;
+  if (!RlBindImports((BYTE *)imageBase, nt, loadLibraryA, getProcAddress,
+                     Parameter)) {
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 16) = 17;
     return 0;
   }
 
   if (!RlProtect((BYTE *)imageBase, nt, virtualProtect)) {
-    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 12) = 9;
+    if (Parameter != NULL) *(volatile DWORD *)((BYTE *)Parameter + 16) = 18;
     return 0;
   }
 
@@ -576,6 +591,7 @@ static ULONG_PTR RlMapImage(LPVOID Parameter) {
 //   +0  LONG       claim, 0 free / 1 taken
 //   +4  DWORD      RL_STATUS_MAGIC once mapping has finished
 //   +8  ULONG_PTR  mapped image base, or 0 on failure
+//   +16 DWORD      successor step: 2 on success, 12..18 on failure
 //
 #define RL_STATUS_MAGIC 0x4E504C52UL /* 'RLPN' */
 
@@ -589,9 +605,16 @@ REFLECTIVE_LOADER_API ULONG_PTR WINAPI ReflectiveLoader(LPVOID Parameter) {
     //
     if (_InterlockedCompareExchange((volatile long *)Parameter, 1, 0) != 0)
       return 0;
+    // Entry probe, winner only: proves the APC ran the loader, and avoids
+    // losers racing the mapper's progress values.
+    *(volatile DWORD *)((BYTE *)Parameter + 16) = 1;
   }
 
   imageBase = RlMapImage(Parameter);
+  if (Parameter != NULL &&
+      *(volatile DWORD *)((BYTE *)Parameter + 16) == 1) {
+    *(volatile DWORD *)((BYTE *)Parameter + 16) = 2;
+  }
 
   if (Parameter != NULL) {
     //

