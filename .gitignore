@@ -21,4 +21,5 @@ Driver/Generated/
 Client/loader/LongsDriverBlob.bin
 !sentinel.md
 !rule.md
+!README.md
 /HostListener
